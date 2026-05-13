@@ -1,5 +1,6 @@
 import {
   adjustTone,
+  aiCheckText,
   checkText,
   healthCheck,
   rewriteText,
@@ -31,62 +32,89 @@ const MENU = {
 
 const TONE_IDS = ['formal', 'casual', 'friendly', 'professional', 'concise'] as const;
 
-function rebuildContextMenus(): void {
-  contextMenus.removeAll(() => {
-    contextMenus.create({
-      id: MENU.CHECK,
-      title: 'Polyscribe: Check grammar',
-      contexts: ['selection'],
-    });
-    contextMenus.create({
-      id: MENU.REWRITE,
-      title: 'Polyscribe: Rewrite',
-      contexts: ['selection'],
-    });
-    contextMenus.create({
-      id: MENU.TONE_PARENT,
-      title: 'Polyscribe: Adjust tone',
-      contexts: ['selection'],
-    });
-    for (const tone of TONE_IDS) {
-      contextMenus.create({
-        id: `${MENU.TONE_PREFIX}${tone}`,
-        parentId: MENU.TONE_PARENT,
-        title: tone.charAt(0).toUpperCase() + tone.slice(1),
-        contexts: ['selection'],
-      });
-    }
-    contextMenus.create({
-      id: MENU.TR_PARENT,
-      title: 'Polyscribe: Translate',
-      contexts: ['selection'],
-    });
-    contextMenus.create({
-      id: MENU.TR_TO_EN,
-      parentId: MENU.TR_PARENT,
-      title: '→ English',
-      contexts: ['selection'],
-    });
-    contextMenus.create({
-      id: MENU.TR_TO_HE,
-      parentId: MENU.TR_PARENT,
-      title: '→ Hebrew',
-      contexts: ['selection'],
-    });
-    contextMenus.create({
-      id: MENU.TR_TO_USER,
-      parentId: MENU.TR_PARENT,
-      title: '→ (loading…)',
-      contexts: ['selection'],
-    });
-    contextMenus.create({
-      id: MENU.TR_CHOOSE,
-      parentId: MENU.TR_PARENT,
-      title: 'Choose language…',
-      contexts: ['selection'],
-    });
-    void syncTranslateUserMenu();
+/**
+ * `removeAll` is asynchronous. Overlapping rebuilds (e.g. onInstalled + onStartup)
+ * could both run `create` with the same ids → "duplicate id" and lastError.
+ * Serialize so only one full rebuild runs at a time.
+ */
+let contextMenuRebuildChain: Promise<void> = Promise.resolve();
+
+function createContextMenuTree(): void {
+  contextMenus.create({
+    id: MENU.CHECK,
+    title: 'Polyscribe: Check grammar',
+    contexts: ['selection'],
   });
+  contextMenus.create({
+    id: MENU.REWRITE,
+    title: 'Polyscribe: Rewrite',
+    contexts: ['selection'],
+  });
+  contextMenus.create({
+    id: MENU.TONE_PARENT,
+    title: 'Polyscribe: Adjust tone',
+    contexts: ['selection'],
+  });
+  for (const tone of TONE_IDS) {
+    contextMenus.create({
+      id: `${MENU.TONE_PREFIX}${tone}`,
+      parentId: MENU.TONE_PARENT,
+      title: tone.charAt(0).toUpperCase() + tone.slice(1),
+      contexts: ['selection'],
+    });
+  }
+  contextMenus.create({
+    id: MENU.TR_PARENT,
+    title: 'Polyscribe: Translate',
+    contexts: ['selection'],
+  });
+  contextMenus.create({
+    id: MENU.TR_TO_EN,
+    parentId: MENU.TR_PARENT,
+    title: '→ English',
+    contexts: ['selection'],
+  });
+  contextMenus.create({
+    id: MENU.TR_TO_HE,
+    parentId: MENU.TR_PARENT,
+    title: '→ Hebrew',
+    contexts: ['selection'],
+  });
+  contextMenus.create({
+    id: MENU.TR_TO_USER,
+    parentId: MENU.TR_PARENT,
+    title: '→ (loading…)',
+    contexts: ['selection'],
+  });
+  contextMenus.create({
+    id: MENU.TR_CHOOSE,
+    parentId: MENU.TR_PARENT,
+    title: 'Choose language…',
+    contexts: ['selection'],
+  });
+}
+
+function rebuildContextMenus(): void {
+  contextMenuRebuildChain = contextMenuRebuildChain
+    .then(
+      () =>
+        new Promise<void>((resolve) => {
+          try {
+            contextMenus.removeAll(() => {
+              try {
+                createContextMenuTree();
+              } catch (e) {
+                console.error('Polyscribe: context menu create failed', e);
+              }
+              void syncTranslateUserMenu().finally(() => resolve());
+            });
+          } catch (e) {
+            console.error('Polyscribe: context menu removeAll failed', e);
+            resolve();
+          }
+        }),
+    )
+    .catch(() => undefined);
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -124,6 +152,10 @@ async function handleApiRequest(req: PolyscribeRequest): Promise<PolyscribeRespo
     switch (req.type) {
       case MSG.CHECK: {
         const data = await checkText(req.text, req.language);
+        return { ok: true, data };
+      }
+      case MSG.AI_CHECK: {
+        const data = await aiCheckText(req.text, req.language);
         return { ok: true, data };
       }
       case MSG.REWRITE: {

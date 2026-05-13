@@ -13,6 +13,8 @@ type CheckApiRaw = {
     original?: string;
     start?: number;
     end?: number;
+    category?: string;
+    type?: string;
   }>;
 };
 
@@ -28,7 +30,21 @@ function normalizeCheckResponse(raw: CheckApiRaw): CheckResponse {
       (original && suggestion
         ? `Change “${original}” to “${suggestion}”`
         : suggestion || 'Suggestion');
-    return { message, suggestion, start: i.start, end: i.end };
+    const category =
+      typeof i.category === 'string'
+        ? i.category
+        : typeof i.type === 'string'
+          ? i.type
+          : undefined;
+    return {
+      message,
+      suggestion,
+      start: i.start,
+      end: i.end,
+      original: typeof i.original === 'string' ? i.original : undefined,
+      explanation: explanation || undefined,
+      category,
+    };
   });
   return {
     correctedText,
@@ -87,6 +103,15 @@ async function apiCall<T>(path: string, body: unknown): Promise<T> {
 
 export async function checkText(text: string, language = 'auto'): Promise<CheckResponse> {
   const raw = await apiCall<CheckApiRaw>('/api/check', { text, language });
+  return normalizeCheckResponse(raw);
+}
+
+/**
+ * AI-tells scan. Same response shape as /api/check — every issue has
+ * `category: 'ai-tell'`. Renders through the same UI as grammar issues.
+ */
+export async function aiCheckText(text: string, language = 'auto'): Promise<CheckResponse> {
+  const raw = await apiCall<CheckApiRaw>('/api/ai-check', { text, language });
   return normalizeCheckResponse(raw);
 }
 

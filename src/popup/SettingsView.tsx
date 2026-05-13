@@ -141,6 +141,24 @@ export function SettingsView({ settings, onSaved }: Props) {
               onChange={(e) => setDraft({ ...draft, enableFloatingButton: e.target.checked })}
             />
           </label>
+          <label className="flex items-start justify-between gap-3 rounded-lg border border-gray-200 px-3 py-2">
+            <span className="text-sm text-gray-800">
+              <span className="font-medium">Inline underlines on supported sites</span>
+              <span className="mt-0.5 block text-[11px] text-gray-500">
+                Show grammar issues inside the field on Gmail, ChatGPT, LinkedIn, X, and WhatsApp Web.
+                Hover an underline for the suggestion. Requires API token.
+              </span>
+              <span className="mt-1 block text-[11px] text-gray-400">
+                Supported: Gmail · ChatGPT · LinkedIn · X · WhatsApp Web
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={draft.enableInlineUnderlines}
+              onChange={(e) => setDraft({ ...draft, enableInlineUnderlines: e.target.checked })}
+            />
+          </label>
           <div>
             <label className="mb-1 block text-xs font-semibold text-gray-600">
               Auto-check quota per page

@@ -2,6 +2,7 @@ import type { CheckResponse, RewriteResponse, TranslateResponse } from './types'
 
 export const MSG = {
   CHECK: 'POLYSCRIBE_CHECK',
+  AI_CHECK: 'POLYSCRIBE_AI_CHECK',
   REWRITE: 'POLYSCRIBE_REWRITE',
   TONE: 'POLYSCRIBE_TONE',
   TRANSLATE: 'POLYSCRIBE_TRANSLATE',
@@ -10,6 +11,7 @@ export const MSG = {
 
 export type PolyscribeRequest =
   | { type: typeof MSG.CHECK; text: string; language?: string }
+  | { type: typeof MSG.AI_CHECK; text: string; language?: string }
   | { type: typeof MSG.REWRITE; text: string; instruction: string }
   | { type: typeof MSG.TONE; text: string; tone: string }
   | { type: typeof MSG.TRANSLATE; text: string; from: string; to: string }

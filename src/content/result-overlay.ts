@@ -94,7 +94,13 @@ function shadowStyles(): string {
       color: #3730a3;
       border-color: #c7d2fe;
     }
-    .body { padding: 12px; overflow: auto; flex: 1; min-height: 0; }
+    .body {
+      padding: 12px;
+      overflow: auto;
+      flex: 1;
+      min-height: 0;
+      min-width: 0;
+    }
     .muted { color: #6b7280; font-size: 12px; }
     .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
     .btn {
@@ -173,8 +179,11 @@ function shadowStyles(): string {
       margin-top: 10px;
     }
     pre.result {
-      white-space: pre-wrap;
-      word-break: break-word;
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
       margin: 0;
       padding: 10px;
       border-radius: 10px;
@@ -182,6 +191,11 @@ function shadowStyles(): string {
       border: 1px solid #e5e7eb;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      word-break: break-word;
+      overflow-wrap: anywhere;
     }
     .subhdr { padding: 0 12px 8px; border-bottom: 1px solid #e5e7eb; background: #fafafa; }
     .extlink { font-size: 11px; color: #4f46e5; text-decoration: none; cursor: pointer; }
@@ -259,7 +273,7 @@ export class PolyscribeOverlay {
     tabs: HTMLElement;
   };
 
-  private activeTab: 'check' | 'rewrite' | 'tone' | 'translate' = 'check';
+  private activeTab: 'check' | 'ai-tells' | 'rewrite' | 'tone' | 'translate' = 'check';
 
   constructor() {
     let host = document.getElementById(HOST_ID);
@@ -313,7 +327,7 @@ export class PolyscribeOverlay {
   open(
     ctx: OverlayCtx,
     anchorRect: DOMRect,
-    options?: { startTab?: 'check' | 'rewrite' | 'tone' | 'translate'; checkResult?: CheckResponse },
+    options?: { startTab?: 'check' | 'ai-tells' | 'rewrite' | 'tone' | 'translate'; checkResult?: CheckResponse },
   ): void {
     this.ctx = ctx;
     const rtl = contentNeedsRtl(ctx.text);
@@ -391,7 +405,7 @@ export class PolyscribeOverlay {
       return;
     }
 
-    if (req.type === MSG.CHECK) {
+    if (req.type === MSG.CHECK || req.type === MSG.AI_CHECK) {
       this.renderCheckResult(ctx.text, resp.data as CheckResponse);
       return;
     }
@@ -418,25 +432,47 @@ export class PolyscribeOverlay {
     this.el.body.innerHTML = '';
     window.removeEventListener('keydown', this.onKey, true);
     document.removeEventListener('mousedown', this.onDocDown, true);
+    this.onCloseCallback?.();
+  }
+
+  private onCloseCallback: (() => void) | null = null;
+  onClose(handler: () => void): void {
+    this.onCloseCallback = handler;
   }
 
   private positionNear(rect: DOMRect): void {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
     const margin = 12;
-    const cardW = Math.min(360, window.innerWidth - 24);
+    const cardW = Math.min(360, vw - 24);
     const cardH = 420;
 
+    // If we somehow got a zero/garbage rect, center the card so it's at
+    // least visible. Beats stranding it in a corner.
+    const degenerate =
+      !Number.isFinite(rect.left) ||
+      !Number.isFinite(rect.top) ||
+      (rect.width === 0 && rect.height === 0 && rect.left === 0 && rect.top === 0);
+    if (degenerate) {
+      const cx = Math.max(margin, (vw - cardW) / 2);
+      const cy = Math.max(margin, (vh - cardH) / 2);
+      this.el.card.style.left = `${Math.round(cx)}px`;
+      this.el.card.style.top = `${Math.round(cy)}px`;
+      return;
+    }
+
+    // Preferred: to the right of the anchor, top-aligned to anchor top.
     let left = rect.right + 8;
     let top = rect.top;
 
-    if (left + cardW > window.innerWidth - margin) {
-      left = Math.max(margin, rect.left - cardW - 8);
-    }
-    if (top + cardH > window.innerHeight - margin) {
-      top = Math.max(margin, rect.bottom - cardH);
-    }
-    top = Math.min(top, window.innerHeight - margin - 120);
-    left = Math.min(left, window.innerWidth - margin - cardW);
-    left = Math.max(margin, left);
+    // If overflows right edge, flip to the left side of the anchor.
+    if (left + cardW > vw - margin) left = rect.left - cardW - 8;
+    // If overflows left edge (anchor is far-left or flipped past 0), pin to margin.
+    if (left < margin) left = margin;
+    // If overflows bottom, push up so the full card stays in view.
+    if (top + cardH > vh - margin) top = vh - margin - cardH;
+    // If overflows top, pin to margin.
+    if (top < margin) top = margin;
 
     this.el.card.style.left = `${Math.round(left)}px`;
     this.el.card.style.top = `${Math.round(top)}px`;
@@ -457,6 +493,7 @@ export class PolyscribeOverlay {
       tabs.appendChild(b);
     };
     mk('check', 'Check', iconSvg.check);
+    mk('ai-tells', 'AI tells', iconSvg.sparkles);
     mk('rewrite', 'Rewrite', iconSvg.pencil);
     mk('tone', 'Tone', iconSvg.palette);
     mk('translate', 'Translate', iconSvg.globe);
@@ -484,6 +521,19 @@ export class PolyscribeOverlay {
       go.className = 'btn';
       go.textContent = 'Run check';
       go.addEventListener('click', () => void this.runCheck(text));
+      row.appendChild(go);
+      body.appendChild(row);
+      return;
+    }
+
+    if (this.activeTab === 'ai-tells') {
+      body.innerHTML = `<div class="muted">Flag stock phrases, generic openers, em-dash clusters, and other AI-tells.</div>`;
+      const row = document.createElement('div');
+      row.className = 'row';
+      const go = document.createElement('button');
+      go.className = 'btn';
+      go.textContent = 'Find AI tells';
+      go.addEventListener('click', () => void this.runAiCheck(text));
       row.appendChild(go);
       body.appendChild(row);
       return;
@@ -521,7 +571,7 @@ export class PolyscribeOverlay {
       return;
     }
 
-    void this.renderTranslatePanel(text);
+    void this.renderTranslatePanel(text).catch(() => undefined);
   }
 
   private async renderTranslatePanel(text: string): Promise<void> {
@@ -627,9 +677,9 @@ export class PolyscribeOverlay {
     body.appendChild(meta);
     const pre = document.createElement('pre');
     pre.className = 'result';
-    if (isRtlLanguageCode(toCode)) {
-      pre.setAttribute('dir', 'rtl');
-    }
+    // Match target writing direction; do not inherit card dir (source may be Hebrew RTL
+    // while translation is English LTR, or the reverse).
+    pre.setAttribute('dir', isRtlLanguageCode(toCode) ? 'rtl' : 'ltr');
     pre.textContent = result;
     body.appendChild(pre);
     const row = document.createElement('div');
@@ -688,6 +738,25 @@ export class PolyscribeOverlay {
     const language = s.defaultLanguage;
     const resp = await sendRequest({
       type: MSG.CHECK,
+      text,
+      language: language === 'auto' ? 'auto' : language,
+    });
+    if (!this.handleError(resp)) return;
+    if (!resp.ok) return;
+    const data = resp.data as CheckResponse;
+    this.renderCheckResult(text, data);
+  }
+
+  private async runAiCheck(text: string): Promise<void> {
+    if (!this.maybeWarnLong(text)) {
+      this.setMode('ai-tells');
+      return;
+    }
+    this.setLoading(true);
+    const s = await getSettings();
+    const language = s.defaultLanguage;
+    const resp = await sendRequest({
+      type: MSG.AI_CHECK,
       text,
       language: language === 'auto' ? 'auto' : language,
     });
@@ -796,7 +865,10 @@ export class PolyscribeOverlay {
         const apply = document.createElement('button');
         apply.className = 'btn';
         apply.textContent = 'Apply';
-        apply.addEventListener('click', () => this.applyOutcome(issue.suggestion!));
+        // `applyOutcome` replaces the user's entire selected range, so we
+        // must pass the FULL corrected text — not the single-word suggestion,
+        // which would obliterate the rest of the selection.
+        apply.addEventListener('click', () => this.applyOutcome(corrected ?? issue.suggestion!));
         row.appendChild(apply);
         div.appendChild(row);
       }

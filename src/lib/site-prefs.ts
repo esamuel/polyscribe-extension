@@ -1,3 +1,5 @@
+import { isExtensionContextInvalidatedError } from './ext-context';
+
 /** Per-host translate from/to memory (hostname only, no path). */
 function key(host: string): string {
   return `polyscribeSiteTranslate__${host}`;
@@ -7,12 +9,17 @@ export async function getSiteTranslatePrefs(
   host: string,
 ): Promise<{ from: string; to: string } | null> {
   if (!host) return null;
-  const data = await chrome.storage.local.get(key(host));
-  const v = data[key(host)] as { from?: string; to?: string } | undefined;
-  if (v && typeof v.from === 'string' && typeof v.to === 'string') {
-    return { from: v.from, to: v.to };
+  try {
+    const data = await chrome.storage.local.get(key(host));
+    const v = data[key(host)] as { from?: string; to?: string } | undefined;
+    if (v && typeof v.from === 'string' && typeof v.to === 'string') {
+      return { from: v.from, to: v.to };
+    }
+    return null;
+  } catch (e) {
+    if (isExtensionContextInvalidatedError(e)) return null;
+    throw e;
   }
-  return null;
 }
 
 export async function setSiteTranslatePrefs(
@@ -21,5 +28,10 @@ export async function setSiteTranslatePrefs(
   to: string,
 ): Promise<void> {
   if (!host) return;
-  await chrome.storage.local.set({ [key(host)]: { from, to } });
+  try {
+    await chrome.storage.local.set({ [key(host)]: { from, to } });
+  } catch (e) {
+    if (isExtensionContextInvalidatedError(e)) return;
+    throw e;
+  }
 }

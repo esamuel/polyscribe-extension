@@ -7,6 +7,8 @@ export type Settings = {
   defaultTranslateSource: 'auto' | LanguageCode;
   defaultTranslateTarget: LanguageCode;
   enableFloatingButton: boolean;
+  /** Inline underlines on Gmail, ChatGPT, LinkedIn, X, WhatsApp (when configured). */
+  enableInlineUnderlines: boolean;
   autoCheckOnSelection: boolean;
   /** Max automatic grammar checks per full page load (5–100). */
   autoCheckQuotaPerPage: number;
@@ -20,6 +22,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultTranslateSource: 'auto',
   defaultTranslateTarget: 'en',
   enableFloatingButton: true,
+  enableInlineUnderlines: true,
   autoCheckOnSelection: true,
   autoCheckQuotaPerPage: 20,
   defaultTone: 'professional',
@@ -30,6 +33,23 @@ export type CheckIssue = {
   suggestion?: string;
   start?: number;
   end?: number;
+  original?: string;
+  explanation?: string;
+  /** grammar | spelling | punctuation | style (from API when present). */
+  category?: string;
+};
+
+/** Issue with UI metadata for inline underlines (content script). */
+export type UnderlineIssueType = 'grammar' | 'spelling' | 'punctuation' | 'style' | 'ai-tell';
+
+export type UnderlineIssue = {
+  id: string;
+  type: UnderlineIssueType;
+  original: string;
+  suggestion: string;
+  explanation: string;
+  start: number;
+  end: number;
 };
 
 export type CheckResponse = {
