@@ -276,9 +276,64 @@ export abstract class BaseAdapter {
     this.renderUnderlines(element, this.currentIssues);
   }
 
+  /**
+   * Re-find an issue's anchor in the live text. The cached `issue.start /
+   * issue.end` offsets can go stale when:
+   *   - the user typed more text after the check resolved but before they
+   *     clicked Apply / Fix all,
+   *   - a rich editor (ProseMirror) batches a state-to-DOM render that
+   *     subtly shifts text-node boundaries,
+   *   - an AI-tell and a grammar issue were computed against slightly
+   *     different snapshots inside Promise.all.
+   *
+   * Strategy: if `live[start..end]` already matches `original`, no rebind
+   * needed (the common case). Otherwise search the whole document for
+   * `original`; if found, snap to the occurrence nearest to the cached
+   * `start` (heuristic that handles "user added a sentence above" or
+   * "below" cleanly). If `original` doesn't appear at all, give up.
+   */
+  protected rebindIssueOffsets(
+    element: HTMLElement,
+    issue: UnderlineIssue,
+  ): { start: number; end: number } | null {
+    if (!issue.original) {
+      return { start: issue.start, end: issue.end };
+    }
+    const liveText = this.getText(element);
+    const at = liveText.slice(issue.start, issue.end);
+    if (at === issue.original) {
+      return { start: issue.start, end: issue.end };
+    }
+    let bestIdx = -1;
+    let bestDist = Infinity;
+    let cursor = 0;
+    while (cursor <= liveText.length - issue.original.length) {
+      const found = liveText.indexOf(issue.original, cursor);
+      if (found < 0) break;
+      const dist = Math.abs(found - issue.start);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = found;
+      }
+      cursor = found + 1;
+    }
+    if (bestIdx < 0) return null;
+    return { start: bestIdx, end: bestIdx + issue.original.length };
+  }
+
   protected applyIssue(element: HTMLElement, issue: UnderlineIssue): void {
     if (!issue.suggestion) return;
-    const ok = this.replaceRange(element, issue.start, issue.end, issue.suggestion);
+    // Rebind offsets to wherever `original` actually lives now — handles
+    // the case where the user kept typing between check and Apply.
+    const live = this.rebindIssueOffsets(element, issue);
+    if (!live) {
+      console.warn(
+        `Polyscribe: Apply skipped — "${issue.original}" is no longer in the document.`,
+      );
+      this.tooltip.hide();
+      return;
+    }
+    const ok = this.replaceRange(element, live.start, live.end, issue.suggestion);
     if (!ok) {
       // The rich editor vetoed the insert (Draft.js / Lexical can refuse).
       // Surface this loudly so the user isn't stuck wondering why Apply
@@ -295,11 +350,11 @@ export abstract class BaseAdapter {
     // Bump the seq so any in-flight runCheck that resolves after this point
     // can't overwrite currentIssues with stale, pre-edit offsets.
     this.checkRequestSeq++;
-    const delta = issue.suggestion.length - (issue.end - issue.start);
+    const delta = issue.suggestion.length - (live.end - live.start);
     this.currentIssues = this.currentIssues
       .filter((i) => i.id !== issue.id)
       .map((i) =>
-        i.start >= issue.end
+        i.start >= live.end
           ? { ...i, start: i.start + delta, end: i.end + delta }
           : i,
       );
@@ -338,24 +393,24 @@ export abstract class BaseAdapter {
     // previously a single Draft.js/Lexical refusal stopped the whole batch
     // and the user saw "Fix all" do nothing. Now we apply what we can.
     const applied = new Set<string>();
-    const skipped: Array<{ id: string; reason: 'drift' | 'veto' }> = [];
+    const skipped: Array<{ id: string; reason: 'drift' | 'veto' | 'gone' }> = [];
     for (const issue of fixable) {
-      if (issue.original) {
-        const live = this.getText(element).slice(issue.start, issue.end);
-        if (live !== issue.original) {
-          console.warn(
-            `Polyscribe: skipping one issue in Fix all — offsets drifted ` +
-              `(expected "${issue.original}", got "${live}"). Continuing with the rest.`,
-          );
-          skipped.push({ id: issue.id, reason: 'drift' });
-          continue;
-        }
+      // Re-find each issue's anchor in the live text. Cached offsets can be
+      // wildly off (the user typed a whole sentence above between the check
+      // and this click). If `original` is still somewhere in the document,
+      // use the nearest occurrence. If it's gone entirely, then skip.
+      const live = this.rebindIssueOffsets(element, issue);
+      if (!live) {
+        console.warn(
+          `Polyscribe: Fix all — "${issue.original}" no longer in document, skipping.`,
+        );
+        skipped.push({ id: issue.id, reason: 'gone' });
+        continue;
       }
-      const ok = this.replaceRange(element, issue.start, issue.end, issue.suggestion);
+      const ok = this.replaceRange(element, live.start, live.end, issue.suggestion);
       if (!ok) {
         console.warn(
-          `Polyscribe: skipping one issue in Fix all — the editor vetoed insertText ` +
-            `(Draft.js / Lexical can refuse). Continuing with the rest.`,
+          `Polyscribe: Fix all — editor refused replacement for "${issue.original}". Continuing.`,
         );
         skipped.push({ id: issue.id, reason: 'veto' });
         continue;
@@ -377,13 +432,18 @@ export abstract class BaseAdapter {
     let copiedToClipboard = false;
     if (applied.size === 0 && skipped.length > 0) {
       let workingText = this.getText(element);
-      // fixable is already sorted right-to-left, so each slice survives the
-      // previous edit. Working copy never goes near the live DOM.
-      for (const issue of fixable) {
+      // Use the rebinder for each issue so the clipboard text reflects the
+      // ACTUAL current document, not the stale offsets the editor refused.
+      // Right-to-left order keeps earlier-offset rebinds valid as we go.
+      const liveAnchors = fixable
+        .map((issue) => ({ issue, live: this.rebindIssueOffsets(element, issue) }))
+        .filter((x): x is { issue: UnderlineIssue; live: { start: number; end: number } } =>
+          !!x.live,
+        )
+        .sort((a, b) => b.live.start - a.live.start);
+      for (const { issue, live } of liveAnchors) {
         workingText =
-          workingText.slice(0, issue.start) +
-          issue.suggestion +
-          workingText.slice(issue.end);
+          workingText.slice(0, live.start) + issue.suggestion + workingText.slice(live.end);
       }
       try {
         void navigator.clipboard.writeText(workingText).catch(() => undefined);
