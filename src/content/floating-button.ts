@@ -1,5 +1,5 @@
 const HOST_ID = 'polyscribe-fab-host';
-export type FabMode = 'hidden' | 'idle' | 'issues' | 'ok';
+export type FabMode = 'hidden' | 'idle' | 'issues' | 'ok' | 'checking';
 
 // Larger + higher-contrast than the original 20/24 pair — busy pages
 // (ChatGPT prompt box, Grammarly-augmented editors) made the smaller FAB
@@ -55,6 +55,10 @@ function ensureHost(): HTMLElement {
       @keyframes psc-fab-in {
         0%   { transform: scale(0.4); opacity: 0; }
         100% { transform: scale(1);   opacity: 1; }
+      }
+      @keyframes psc-fab-pulse {
+        0%   { box-shadow: 0 0 0 2px #ffffff, 0 4px 14px rgba(15,23,42,0.30), 0 0 0 0 rgba(13,148,136,0.6); }
+        100% { box-shadow: 0 0 0 2px #ffffff, 0 4px 14px rgba(15,23,42,0.30), 0 0 0 10px rgba(13,148,136,0); }
       }
       button.fab {
         all: unset;
@@ -200,17 +204,30 @@ export function setFabMode(
   if (mode === 'idle') {
     applySize(btn, SIZE_IDLE);
     btn.innerHTML = '<span style="font-size:14px;font-weight:800;letter-spacing:-0.02em">P</span>';
+    btn.style.animation = '';
+    return;
+  }
+  if (mode === 'checking') {
+    // Pulse softly while a cloud check is in-flight. The user sees: local
+    // underlines arrived instantly, AND something is happening upstream
+    // (so they're not wondering whether more suggestions are coming).
+    applySize(btn, SIZE_IDLE);
+    btn.innerHTML =
+      '<span style="font-size:14px;font-weight:800;letter-spacing:-0.02em">P</span>';
+    btn.style.animation = 'psc-fab-pulse 900ms ease-in-out infinite alternate';
     return;
   }
   if (mode === 'ok') {
     applySize(btn, SIZE_IDLE);
     btn.textContent = '✓';
+    btn.style.animation = '';
     return;
   }
   if (mode === 'issues') {
     const n = options?.issueCount ?? 0;
     applySize(btn, SIZE_ISSUE);
     btn.innerHTML = '⚠';
+    btn.style.animation = '';
     const b = document.createElement('span');
     b.className = 'badge';
     b.textContent = String(n);

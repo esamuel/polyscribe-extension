@@ -24,6 +24,10 @@ import { pickAdapter } from './adapters';
 import { PolyscribeOverlay } from './result-overlay';
 import { SelectionUnderlines } from './SelectionUnderlines';
 import { rectsToTopDoc } from './lib/iframeRects';
+import {
+  isExtensionContextInvalidated,
+  markExtensionContextInvalidated,
+} from './lib/sw-check';
 
 type ContextPayload = {
   type: 'POLYSCRIBE_CONTEXT';
@@ -260,12 +264,19 @@ function scheduleAutoCheck(): void {
       if (t !== lastSelection?.text) return;
 
       const language = s.defaultLanguage;
+      // Signal the cloud round-trip with a soft pulse on the FAB so the user
+      // doesn't wonder "did it hear me?" between selection and response.
+      setFabMode('checking');
       const raw = await sendSw<PolyscribeResponse>({
         type: MSG.CHECK,
         text: t,
         language: language === 'auto' ? 'auto' : language,
       });
-      if (!raw || !('ok' in raw) || !raw.ok) return;
+      if (!raw || !('ok' in raw) || !raw.ok) {
+        // Bail back to idle so the pulse doesn't run forever on API failure.
+        setFabMode('idle');
+        return;
+      }
       const data = raw.data as CheckResponse;
       autoQuotaUsed += 1;
       const n = data.issues?.length ?? 0;
@@ -309,16 +320,27 @@ function scheduleAutoCheck(): void {
 }
 
 function sendSw<T>(msg: PolyscribeRequest): Promise<T | null> {
+  // Short-circuit on a known-orphaned context — same guard the inline
+  // pipeline uses. Avoids log spam and lets the StaleBanner do its job.
+  if (isExtensionContextInvalidated()) return Promise.resolve(null);
   return new Promise((resolve) => {
     try {
       chrome.runtime.sendMessage(msg, (resp) => {
-        if (chrome.runtime.lastError) {
+        const lastErr = chrome.runtime.lastError;
+        if (lastErr) {
+          if (lastErr.message && /context invalidated/i.test(lastErr.message)) {
+            markExtensionContextInvalidated();
+          }
           resolve(null);
           return;
         }
         resolve(resp as T);
       });
-    } catch {
+    } catch (e) {
+      const msg2 = e instanceof Error ? e.message : String(e);
+      if (/context invalidated/i.test(msg2)) {
+        markExtensionContextInvalidated();
+      }
       resolve(null);
     }
   });

@@ -1,5 +1,9 @@
 import { getSettings } from '../../lib/storage';
-import { requestAiCheckFromSw, requestCheckFromSw } from '../lib/sw-check';
+import {
+  isExtensionContextInvalidated,
+  requestAiCheckFromSw,
+  requestCheckFromSw,
+} from '../lib/sw-check';
 import type { CheckIssue, UnderlineIssue, UnderlineIssueType } from '../../lib/types';
 import { Debouncer } from '../lib/debouncer';
 import { UnderlineOverlay } from '../overlay/UnderlineOverlay';
@@ -90,7 +94,11 @@ export abstract class BaseAdapter {
     this.overlay = new UnderlineOverlay();
     this.tooltip = new TooltipManager();
     this.summaryChip = new SummaryChip();
-    this.debouncer = new Debouncer(1500);
+    // 500ms (was 1500ms) — local spell-check fires on word boundaries for
+    // instant feedback, so the cloud call here is just for grammar + style.
+    // Tighter debounce keeps the perceived latency under ~1 second after
+    // the user pauses, matching the "real-time" UX feel.
+    this.debouncer = new Debouncer(500);
     window.addEventListener('resize', this.onWinResize);
   }
 
@@ -174,6 +182,14 @@ export abstract class BaseAdapter {
   }
 
   protected async runCheck(element: HTMLElement): Promise<void> {
+    // Extension was reloaded — content script is orphaned. Stop trying;
+    // the StaleBanner is already telling the user to refresh the tab.
+    if (isExtensionContextInvalidated()) {
+      this.overlay.clear();
+      this.tooltip.hide();
+      this.summaryChip.hide();
+      return;
+    }
     const text = this.getText(element);
     this.currentText = text;
     if (text.length < 10) {
@@ -317,34 +333,75 @@ export abstract class BaseAdapter {
     this.summaryChip.setLoading(true);
     this.tooltip.hide();
 
+    // Walk right-to-left so each replacement leaves earlier-offset issues
+    // untouched. **Skip on failure instead of bailing on the first veto** —
+    // previously a single Draft.js/Lexical refusal stopped the whole batch
+    // and the user saw "Fix all" do nothing. Now we apply what we can.
     const applied = new Set<string>();
+    const skipped: Array<{ id: string; reason: 'drift' | 'veto' }> = [];
     for (const issue of fixable) {
-      // Verify the offsets still point at `issue.original` in the live text.
-      // Rich editors that re-serialize on each insertText (Lexical with some
-      // plugins) can shift offsets out from under us; in that case, abort
-      // the rest rather than mis-applying.
       if (issue.original) {
         const live = this.getText(element).slice(issue.start, issue.end);
         if (live !== issue.original) {
           console.warn(
-            `Polyscribe: Fix all stopped — offsets drifted after a prior replace (expected "${issue.original}", got "${live}").`,
+            `Polyscribe: skipping one issue in Fix all — offsets drifted ` +
+              `(expected "${issue.original}", got "${live}"). Continuing with the rest.`,
           );
-          break;
+          skipped.push({ id: issue.id, reason: 'drift' });
+          continue;
         }
       }
       const ok = this.replaceRange(element, issue.start, issue.end, issue.suggestion);
       if (!ok) {
-        console.warn('Polyscribe: Fix all stopped — replaceRange was vetoed by the editor.');
-        break;
+        console.warn(
+          `Polyscribe: skipping one issue in Fix all — the editor vetoed insertText ` +
+            `(Draft.js / Lexical can refuse). Continuing with the rest.`,
+        );
+        skipped.push({ id: issue.id, reason: 'veto' });
+        continue;
       }
       applied.add(issue.id);
     }
 
+    // Keep skipped issues onscreen so the user can see what didn't apply
+    // and decide what to do (retry, edit manually, dismiss).
     this.currentIssues = this.currentIssues.filter((i) => !applied.has(i.id));
     // Invalidate the dedupe cache so the next debounce re-checks the now-
     // edited text instead of skipping as a no-op.
     this.lastCheckedText = null;
-    this.summaryChip.setLoading(false);
+
+    // When the editor refused EVERY replacement (Lexical / Draft.js in some
+    // contexts), the user has no actionable next step from "check console".
+    // Build the corrected text in-memory and copy it — Cmd-V then becomes
+    // the way out. Same fallback the single-issue Apply does on veto.
+    let copiedToClipboard = false;
+    if (applied.size === 0 && skipped.length > 0) {
+      let workingText = this.getText(element);
+      // fixable is already sorted right-to-left, so each slice survives the
+      // previous edit. Working copy never goes near the live DOM.
+      for (const issue of fixable) {
+        workingText =
+          workingText.slice(0, issue.start) +
+          issue.suggestion +
+          workingText.slice(issue.end);
+      }
+      try {
+        void navigator.clipboard.writeText(workingText).catch(() => undefined);
+        copiedToClipboard = true;
+      } catch {
+        /* clipboard write requires user gesture in some contexts — silent */
+      }
+    }
+
+    // Surface the outcome on the chip itself (not just console) — the user
+    // shouldn't have to open devtools to know what happened.
+    this.summaryChip.showResult(applied.size, fixable.length, copiedToClipboard);
+
+    // Re-render underlines for the remaining issues, then hide the chip
+    // after a short window if everything applied (success state).
     this.renderUnderlines(element, this.currentIssues);
+    if (skipped.length === 0) {
+      window.setTimeout(() => this.summaryChip.hide(), 1100);
+    }
   }
 }

@@ -22,10 +22,12 @@ export class TooltipManager {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         background: white;
         border: 1px solid #e5e7eb;
-        border-radius: 12px;
-        box-shadow: 0 10px 40px rgba(0,0,0,0.15);
-        padding: 16px;
-        width: 320px;
+        border-radius: 10px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+        /** Slimmer + tighter than the original 320×~200 — leaves more page
+         *  text visible in the side-placement layout. */
+        padding: 12px;
+        width: 268px;
         pointer-events: auto;
         animation: fadeIn 150ms ease-out;
       }
@@ -33,33 +35,34 @@ export class TooltipManager {
         from { opacity: 0; transform: translateY(-4px); }
         to   { opacity: 1; transform: translateY(0); }
       }
-      .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-      .type-label { font-size: 13px; font-weight: 500; }
+      .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+      .type-label { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; }
       .grammar { color: #2563eb; }
       .spelling { color: #dc2626; }
       .punctuation { color: #ea580c; }
       .style { color: #9333ea; }
-      .change { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; font-size: 15px; }
-      .original { text-decoration: line-through; color: #ef4444; background: #fef2f2; padding: 2px 6px; border-radius: 4px; }
+      .ai-tell { color: #0d9488; }
+      .change { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; font-size: 14px; line-height: 1.3; }
+      .original { text-decoration: line-through; color: #ef4444; background: #fef2f2; padding: 1px 5px; border-radius: 4px; }
       .arrow { color: #9ca3af; }
-      .suggestion { color: #047857; background: #ecfdf5; padding: 2px 6px; border-radius: 4px; font-weight: 500; }
-      .why { font-size: 13px; color: #6b7280; font-style: italic; border-left: 2px solid #e5e7eb; padding-left: 12px; margin-bottom: 12px; }
-      .actions { display: flex; gap: 8px; align-items: center; }
+      .suggestion { color: #047857; background: #ecfdf5; padding: 1px 5px; border-radius: 4px; font-weight: 500; }
+      .why { font-size: 12px; color: #6b7280; font-style: italic; border-left: 2px solid #e5e7eb; padding-left: 10px; margin-bottom: 8px; line-height: 1.4; }
+      .actions { display: flex; gap: 6px; align-items: center; }
       .btn-apply {
         flex: 1; background: #0d9488; color: white;
-        padding: 8px 12px; border: none; border-radius: 8px;
-        font-size: 13px; font-weight: 500; cursor: pointer;
+        padding: 6px 10px; border: none; border-radius: 6px;
+        font-size: 12px; font-weight: 600; cursor: pointer;
       }
       .btn-apply:hover { background: #0f766e; }
       .btn-apply:disabled { background: #047857; cursor: default; opacity: 0.95; }
       .btn-dismiss {
         background: transparent; color: #4b5563;
-        padding: 8px 12px; border: none; border-radius: 8px;
-        font-size: 13px; cursor: pointer;
+        padding: 6px 10px; border: none; border-radius: 6px;
+        font-size: 12px; cursor: pointer;
       }
       .btn-dismiss:hover { background: #f3f4f6; }
-      .btn-why { background: transparent; color: #9ca3af; border: none; padding: 8px; cursor: pointer; }
-      .close { background: transparent; border: none; color: #9ca3af; cursor: pointer; }
+      .btn-why { background: transparent; color: #9ca3af; border: none; padding: 6px; cursor: pointer; font-size: 12px; }
+      .close { background: transparent; border: none; color: #9ca3af; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 4px; }
       [dir="rtl"] { direction: rtl; }
     `;
     this.shadow.appendChild(style);
@@ -145,15 +148,58 @@ export class TooltipManager {
     tooltip.addEventListener('mouseleave', () => this.scheduleHide());
     this.shadow.appendChild(tooltip);
 
+    // Place the tooltip relative to the underlined word, **preferring sides**
+    // (right of the anchor first, then left), and only falling back to
+    // below/above when there's no horizontal room. Grammarly's pattern.
+    // Why: when the tooltip is centered below the anchor it covers the next
+    // five lines of paragraph text — the user can't compare the original
+    // (in the page) with the suggestion (in the tooltip) without scrolling.
+    // A side placement keeps the line of text visible.
     const tooltipRect = tooltip.getBoundingClientRect();
-    let top = anchorRect.bottom + 8;
-    if (top + tooltipRect.height > window.innerHeight - 16) {
-      top = anchorRect.top - tooltipRect.height - 8;
-    }
-    let left = anchorRect.left + anchorRect.width / 2 - 160;
-    left = Math.max(16, Math.min(left, window.innerWidth - 336));
-    this.host.style.top = `${top}px`;
-    this.host.style.left = `${left}px`;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const margin = 12;
+    const gap = 8;
+    const w = tooltipRect.width;
+    const h = tooltipRect.height;
+
+    const horizCentered = Math.max(
+      margin,
+      Math.min(anchorRect.left + anchorRect.width / 2 - w / 2, vw - margin - w),
+    );
+    const sideTop = Math.max(
+      margin,
+      Math.min(anchorRect.top + anchorRect.height / 2 - h / 2, vh - margin - h),
+    );
+
+    type Pos = { left: number; top: number };
+    const candidates: Pos[] = [
+      // 1. Right of the anchor, vertically centered on it.
+      { left: anchorRect.right + gap, top: sideTop },
+      // 2. Left of the anchor (for right-margin selections).
+      { left: anchorRect.left - w - gap, top: sideTop },
+      // 3. Below the anchor (current default — covers paragraph text).
+      { left: horizCentered, top: anchorRect.bottom + gap },
+      // 4. Above the anchor.
+      { left: horizCentered, top: anchorRect.top - h - gap },
+    ];
+
+    const fits = (p: Pos): boolean =>
+      p.left >= margin &&
+      p.left + w <= vw - margin &&
+      p.top >= margin &&
+      p.top + h <= vh - margin;
+
+    const chosen =
+      candidates.find(fits) ??
+      // Nothing fits cleanly — clamp the "below" option into the viewport.
+      {
+        left: horizCentered,
+        top: Math.max(margin, Math.min(anchorRect.bottom + gap, vh - margin - h)),
+      };
+
+    this.host.style.top = `${Math.round(chosen.top)}px`;
+    this.host.style.left = `${Math.round(chosen.left)}px`;
   }
 
   /**

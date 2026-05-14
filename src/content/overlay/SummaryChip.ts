@@ -77,6 +77,10 @@ export class SummaryChip {
   private chip: HTMLButtonElement | null = null;
   private handler: (() => void) | null = null;
   private lastN = -1;
+  /** Epoch ms — `update()` is a no-op until this passes. Set by `showResult`
+   *  so the "Fixed N" confirmation isn't immediately overwritten by the
+   *  re-render that runs right after Fix all completes. */
+  private lockedUntil = 0;
 
   private ensureChip(): HTMLButtonElement {
     if (this.chip) return this.chip;
@@ -85,7 +89,9 @@ export class SummaryChip {
     btn.type = 'button';
     btn.className = 'chip';
     btn.setAttribute('aria-label', 'Fix all Polyscribe suggestions');
-    btn.innerHTML = `<span class="icon">✓</span><span class="label">Fix all</span><span class="count">0</span>`;
+    // Single unambiguous label — was "Fix all (N)" with a count bubble which
+    // users read as ambiguous ("does (5) mean 5 fixed or 5 to fix?").
+    btn.innerHTML = `<span class="icon">✓</span><span class="label">Fix 0 issues</span>`;
     // mousedown.preventDefault keeps focus on the editor — otherwise the
     // click steals focus, the editor blurs, our blur handler calls hide(),
     // and `setLoading(true)` lands on an already-hidden chip mid-action.
@@ -100,19 +106,25 @@ export class SummaryChip {
     return btn;
   }
 
+  private setLabel(text: string): void {
+    const label = this.chip?.querySelector<HTMLElement>('.label');
+    if (label) label.textContent = text;
+  }
+
   /** Update visibility + count + click handler. n < 2 hides the chip. */
   update(n: number, onFixAll: () => void): void {
+    // Always keep the handler fresh, regardless of lock state — the lock
+    // only protects the LABEL from being overwritten during the success
+    // flash, not the click target.
+    this.handler = onFixAll;
+    if (Date.now() < this.lockedUntil) return;
     if (n < 2) {
       this.hide();
       return;
     }
-    // Always refresh the handler — it closes over `element` from the caller
-    // and would go stale if we early-out on unchanged count.
-    this.handler = onFixAll;
     if (n === this.lastN && this.chip?.classList.contains('show')) return;
     const chip = this.ensureChip();
-    const countEl = chip.querySelector<HTMLElement>('.count');
-    if (countEl) countEl.textContent = String(n);
+    this.setLabel(`Fix ${n} issue${n === 1 ? '' : 's'}`);
     chip.classList.add('show');
     chip.disabled = false;
     this.lastN = n;
@@ -121,8 +133,34 @@ export class SummaryChip {
   setLoading(loading: boolean): void {
     if (!this.chip) return;
     this.chip.disabled = loading;
-    const label = this.chip.querySelector<HTMLElement>('.label');
-    if (label) label.textContent = loading ? 'Fixing…' : 'Fix all';
+    if (loading) this.setLabel('Fixing…');
+    // Caller decides what to show on completion — call showResult or update.
+  }
+
+  /**
+   * Briefly show the post-fix outcome before the next `update()` overwrites
+   * the label. `applied` is the count that landed; `total` is what we tried.
+   * Equal → "✓ Fixed N". Less than → "Fixed M of N — try the rest manually".
+   * Zero → "Couldn't apply — see console" (rare; editor vetoed everything).
+   */
+  showResult(applied: number, total: number, copiedToClipboard = false): void {
+    if (!this.chip) return;
+    this.chip.disabled = true;
+    // Failures linger longer (user needs to read the message); successes
+    // are brief because the underlines disappearing is the real feedback.
+    const lockMs = applied === total ? 1000 : 2500;
+    this.lockedUntil = Date.now() + lockMs;
+    if (applied === 0) {
+      this.setLabel(
+        copiedToClipboard
+          ? "Copied corrected text — paste with ⌘V"
+          : "Couldn't apply — check console",
+      );
+    } else if (applied < total) {
+      this.setLabel(`✓ Fixed ${applied} of ${total}`);
+    } else {
+      this.setLabel(`✓ Fixed ${applied} issue${applied === 1 ? '' : 's'}`);
+    }
   }
 
   hide(): void {
@@ -130,5 +168,6 @@ export class SummaryChip {
     this.chip.classList.remove('show');
     this.handler = null;
     this.lastN = -1;
+    this.lockedUntil = 0;
   }
 }
