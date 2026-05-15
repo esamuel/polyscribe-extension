@@ -114,14 +114,20 @@ export class TooltipManager {
         <button type="button" class="btn-why" data-action="why" title="Why?">?</button>
       </div>
     `;
-    // CRITICAL: prevent focus theft on mousedown. Without this, clicking
-    // any button in the tooltip blurs the underlying editor, fires the
-    // editor's `blur` listener (which hides the tooltip and clears
-    // overlays), and — worse — `execCommand('insertText')` in the Apply
-    // path then runs without editor focus and silently no-ops on rich
-    // editors like ProseMirror and Lexical. Same pattern we already use
-    // on SummaryChip and StaleBanner.
-    tooltip.addEventListener('mousedown', (e) => e.preventDefault());
+    // CRITICAL: prevent focus theft on mousedown — directly on EACH button.
+    // A container-level mousedown listener doesn't work reliably across
+    // shadow-DOM boundaries: by the time the event bubbles up, the browser
+    // may already have started shifting focus to the button. Per-button
+    // listeners run synchronously with the focus-shift default action and
+    // reliably cancel it. Same pattern as SummaryChip.
+    for (const btn of Array.from(
+      tooltip.querySelectorAll<HTMLButtonElement>('button'),
+    )) {
+      btn.addEventListener('mousedown', (e) => e.preventDefault());
+      // Belt-and-suspenders: tabindex=-1 ALSO prevents focus on click for
+      // browsers / shadow-DOM quirks where mousedown.preventDefault drifts.
+      btn.setAttribute('tabindex', '-1');
+    }
     tooltip.addEventListener('click', (e) => {
       const t = e.target as HTMLElement;
       const action = t.closest('[data-action]')?.getAttribute('data-action');

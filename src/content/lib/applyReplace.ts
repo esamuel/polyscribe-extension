@@ -33,7 +33,9 @@ import { rangeFromOffsets } from './editableText';
  * fail — at which point the editor is genuinely intransigent.
  */
 
-const DEBUG = false;
+// Verbose tier-by-tier logging while we stabilise Apply across rich
+// editors. Flip to false once the matrix is reliable.
+const DEBUG = true;
 function dlog(...args: unknown[]): void {
   if (DEBUG) console.log('[Polyscribe replace]', ...args);
 }
@@ -106,25 +108,6 @@ function tryInsertReplacementText(
   }
   const accepted = element.dispatchEvent(ev);
   dlog('strategy 1 insertReplacementText accepted=', accepted);
-  return accepted;
-}
-
-/**
- * STRATEGY 2 — synthetic `paste` event with a DataTransfer.
- * Editors handle paste robustly (history entry: "paste"). PM, Lexical,
- * and Quill all accept this even when synthetic.
- */
-function tryPaste(element: HTMLElement, replacement: string): boolean {
-  const dt = new DataTransfer();
-  dt.setData('text/plain', replacement);
-  const ev = new ClipboardEvent('paste', {
-    clipboardData: dt,
-    bubbles: true,
-    cancelable: true,
-    composed: true,
-  });
-  const accepted = element.dispatchEvent(ev);
-  dlog('strategy 2 paste accepted=', accepted);
   return accepted;
 }
 
@@ -210,54 +193,55 @@ export function applyContentEditableReplace(
     }
   }
 
-  const initialText = element.textContent ?? '';
+  // Detect ProseMirror (ChatGPT, Notion, Substack, etc.) — it has a beforeinput
+  // handler that calls preventDefault on `insertText` from synthetic events,
+  // so execCommand returns false on PM. For non-PM editors (Gmail Lexical,
+  // LinkedIn Quill, plain contenteditable), execCommand IS the right tool
+  // and trusting its boolean is what the proven `applyTextToRange` does.
+  const isProseMirror =
+    element.classList.contains('ProseMirror') || !!element.closest('.ProseMirror');
+  dlog('isProseMirror=', isProseMirror, 'element=', element.tagName, element.className);
 
-  // Each strategy gets a fresh selection (some editors clear it after
-  // refusing to handle a synthetic event).
   const trySelection = (): boolean => !!resetSelection(ownerWin, range);
 
   // ── Strategy 1: execCommand('insertText') ─────────────────────────────
-  // Synchronous; returns a real boolean. Works for Gmail Lexical, Quill,
-  // plain contenteditable. Fails (returns false) on ProseMirror because PM
-  // preventDefault's the underlying beforeinput — we then fall through.
-  if (
-    trySelection() &&
-    tryExecInsertText(ownerDoc, replacement) &&
-    (element.textContent ?? '') !== initialText
-  ) {
-    dlog('strategy 1 (execCommand) succeeded');
+  // SYNCHRONOUS, returns a real boolean. This is what the overlay's
+  // `applyTextToRange` uses and it works reliably on Gmail. Trust the
+  // return value — DON'T add a text-change check, because some editors
+  // (Lexical) commit on the next microtask and the sync check would lie.
+  if (trySelection()) {
+    const ok = tryExecInsertText(ownerDoc, replacement);
+    if (ok) {
+      dlog('strategy 1 (execCommand) returned true — trusting');
+      return true;
+    }
+    dlog('strategy 1 (execCommand) returned false — fall through');
+  }
+
+  // ── Strategy 2: insertReplacementText — ProseMirror specifically ──────
+  // PM cancels `insertText` but special-cases `insertReplacementText` (the
+  // spell-check semantic). Only try this when we're on PM; other editors
+  // accept it but don't necessarily act on it, which would be a false
+  // positive.
+  if (isProseMirror && trySelection() && tryInsertReplacementText(element, range, replacement)) {
+    dlog('strategy 2 (insertReplacementText, PM-only) accepted');
     return true;
   }
 
-  // ── Strategy 2: insertReplacementText (ProseMirror spell-check path) ──
-  // PM, Lexical, Slate all special-case this exact inputType because it's
-  // what Chrome's native spell-check dispatches. PM commits async (on its
-  // own microtask), so a synchronous text-change check would fail even on
-  // success — we trust `accepted = !preventDefault()` here.
-  if (trySelection() && tryInsertReplacementText(element, range, replacement)) {
-    dlog('strategy 2 (insertReplacementText) accepted');
-    return true;
-  }
-
-  // ── Strategy 3: synthetic paste ───────────────────────────────────────
-  // Broad fallback. Editors handle paste robustly; undo history will read
-  // "paste" instead of "type" but the edit lands.
-  if (trySelection() && tryPaste(element, replacement)) {
-    dlog('strategy 3 (paste) accepted');
-    return true;
-  }
-
-  // ── Strategy 4: direct DOM mutation (last resort) ─────────────────────
+  // ── Strategy 3: direct DOM mutation (last resort) ─────────────────────
+  // Always commits synchronously. PM rebuilds its state from the DOM on
+  // the next tick — losing fine undo coalescing but the edit lands.
+  const beforeText = element.textContent ?? '';
   if (
     trySelection() &&
     tryDomMutation(element, ownerDoc, range, replacement) &&
-    (element.textContent ?? '') !== initialText
+    (element.textContent ?? '') !== beforeText
   ) {
-    dlog('strategy 4 (DOM mutation) succeeded');
+    dlog('strategy 3 (DOM mutation) succeeded');
     return true;
   }
 
-  dlog('all 4 strategies failed — caller will clipboard fallback');
+  dlog('all strategies failed — caller will clipboard fallback');
   return false;
 }
 
