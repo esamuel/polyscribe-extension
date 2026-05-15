@@ -440,7 +440,8 @@ export abstract class BaseAdapter {
     }
     // Show "Fix all (N)" chip whenever we have 2+ fixable issues. Counts only
     // issues with a non-empty suggestion — there's nothing to apply otherwise.
-    const fixable = issues.filter((i) => !!i.suggestion).length;
+    // Empty-string suggestion is a valid "delete this" intent — accept it.
+    const fixable = issues.filter((i) => typeof i.suggestion === 'string').length;
     this.summaryChip.update(fixable, () => void this.fixAllIssues(element));
   }
 
@@ -502,7 +503,8 @@ export abstract class BaseAdapter {
   }
 
   protected applyIssue(element: HTMLElement, issue: UnderlineIssue): void {
-    if (!issue.suggestion) return;
+    // Don't early-out for empty suggestion — that's a deletion request.
+    if (typeof issue.suggestion !== 'string') return;
     // Rebind offsets to wherever `original` actually lives now — handles
     // the case where the user kept typing between check and Apply.
     const live = this.rebindIssueOffsets(element, issue);
@@ -569,7 +571,8 @@ export abstract class BaseAdapter {
    */
   protected async fixAllIssues(element: HTMLElement): Promise<void> {
     const fixable = this.currentIssues
-      .filter((i) => !!i.suggestion)
+      // Empty string is a valid 'delete this' suggestion — keep it.
+      .filter((i) => typeof i.suggestion === 'string')
       .sort((a, b) => b.start - a.start);
     if (!fixable.length) return;
 

@@ -106,6 +106,17 @@ export class SentencePanel {
         color: #065f46;
         font-weight: 500;
       }
+      /** "Delete this passage" intent — empty suggestion. Distinct color
+       *  + icon hint so the green box doesn't look like a broken render. */
+      .suggestion.deletion {
+        background: #fef3c7;
+        color: #92400e;
+        font-style: italic;
+      }
+      .delete-hint { font-weight: 600; }
+      .btn-delete { background: #b45309; }
+      .btn-delete:hover { background: #92400e; }
+      .btn-delete:disabled { background: #78350f; }
       .why {
         font-size: 12.5px;
         color: #475569;
@@ -147,6 +158,9 @@ export class SentencePanel {
         .header { border-bottom-color: rgba(255,255,255,0.06); }
         .original { background: rgba(239,68,68,0.12); color: #fecaca; }
         .suggestion { background: rgba(13,148,136,0.18); color: #6ee7b7; }
+        .suggestion.deletion { background: rgba(245,158,11,0.18); color: #fcd34d; }
+        .btn-delete { background: #d97706; }
+        .btn-delete:hover { background: #b45309; }
         .why { border-left-color: rgba(255,255,255,0.16); color: #cbd5e1; }
         .btn-dismiss { color: #cbd5e1; }
         .btn-dismiss:hover { background: rgba(255,255,255,0.08); }
@@ -174,12 +188,19 @@ export class SentencePanel {
     // Tear down any prior panel render.
     this.shadow.querySelector('.panel')?.remove();
 
-    const applyLabel = handlers.applyLabel ?? 'Apply';
-    const appliedLabel = handlers.appliedLabel ?? 'Applied';
+    // Empty suggestion = "delete this passage." Reflect that intent in the
+    // UI so an empty green box doesn't look like a broken render.
+    const isDeletion = issue.suggestion === '';
+    const applyLabel = handlers.applyLabel ?? (isDeletion ? 'Delete' : 'Apply');
+    const appliedLabel = handlers.appliedLabel ?? (isDeletion ? 'Deleted' : 'Applied');
 
     const isRTL = /[֐-׿؀-ۿ]/.test(
       issue.explanation + issue.original + issue.suggestion,
     );
+
+    const suggestionHtml = isDeletion
+      ? `<span class="delete-hint">⌫ Delete this passage</span>`
+      : escapeHtml(issue.suggestion);
 
     const panel = document.createElement('div');
     panel.className = 'panel';
@@ -192,11 +213,11 @@ export class SentencePanel {
       <div class="body">
         <div class="row original">${escapeHtml(issue.original)}</div>
         <div class="arrow">↓</div>
-        <div class="row suggestion">${escapeHtml(issue.suggestion)}</div>
+        <div class="row suggestion${isDeletion ? ' deletion' : ''}">${suggestionHtml}</div>
         ${issue.explanation ? `<div class="why">${escapeHtml(issue.explanation)}</div>` : ''}
       </div>
       <div class="actions">
-        <button type="button" class="btn-apply" data-action="apply">${escapeHtml(applyLabel)}</button>
+        <button type="button" class="btn-apply${isDeletion ? ' btn-delete' : ''}" data-action="apply">${escapeHtml(applyLabel)}</button>
         <button type="button" class="btn-dismiss" data-action="dismiss">Dismiss</button>
       </div>
     `;

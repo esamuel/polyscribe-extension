@@ -46,6 +46,10 @@ export class TooltipManager {
       .original { text-decoration: line-through; color: #ef4444; background: #fef2f2; padding: 1px 5px; border-radius: 4px; }
       .arrow { color: #9ca3af; }
       .suggestion { color: #047857; background: #ecfdf5; padding: 1px 5px; border-radius: 4px; font-weight: 500; }
+      .suggestion.deletion { color: #92400e; background: #fef3c7; font-style: italic; }
+      .btn-delete { background: #b45309; }
+      .btn-delete:hover { background: #92400e; }
+      .btn-delete:disabled { background: #78350f; }
       .why { font-size: 12px; color: #6b7280; font-style: italic; border-left: 2px solid #e5e7eb; padding-left: 10px; margin-bottom: 8px; line-height: 1.4; }
       .actions { display: flex; gap: 6px; align-items: center; }
       .btn-apply {
@@ -90,8 +94,11 @@ export class TooltipManager {
     }
     this.shadow.querySelector('.tooltip')?.remove();
 
-    const applyLabel = handlers.applyLabel ?? 'Apply';
-    const appliedLabel = handlers.appliedLabel ?? 'Applied';
+    // Empty suggestion = "delete this." Distinct visual + button label so
+    // an empty green chip doesn't look like a render bug.
+    const isDeletion = issue.suggestion === '';
+    const applyLabel = handlers.applyLabel ?? (isDeletion ? 'Delete' : 'Apply');
+    const appliedLabel = handlers.appliedLabel ?? (isDeletion ? 'Deleted' : 'Applied');
 
     const isRTL = /[\u0590-\u05FF\u0600-\u06FF]/.test(issue.explanation + issue.original + issue.suggestion);
     const tooltip = document.createElement('div');
@@ -105,11 +112,11 @@ export class TooltipManager {
       <div class="change">
         <span class="original">${escapeHtml(issue.original)}</span>
         <span class="arrow">→</span>
-        <span class="suggestion">${escapeHtml(issue.suggestion)}</span>
+        ${isDeletion ? '<span class="suggestion deletion">⌫ Delete</span>' : `<span class="suggestion">${escapeHtml(issue.suggestion)}</span>`}
       </div>
       <div class="why" style="display:none">${escapeHtml(issue.explanation)}</div>
       <div class="actions">
-        <button type="button" class="btn-apply" data-action="apply">${escapeHtml(applyLabel)}</button>
+        <button type="button" class="btn-apply${isDeletion ? ' btn-delete' : ''}" data-action="apply">${escapeHtml(applyLabel)}</button>
         <button type="button" class="btn-dismiss" data-action="dismiss">Dismiss</button>
         <button type="button" class="btn-why" data-action="why" title="Why?">?</button>
       </div>
