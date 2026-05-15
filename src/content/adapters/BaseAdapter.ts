@@ -48,6 +48,136 @@ function hasCompetingExtension(element: HTMLElement): boolean {
   return false;
 }
 
+/**
+ * Find the occurrence of `needle` in `haystack` whose start is closest to
+ * `hint`. Returns null if no occurrence exists. Used by the rebinder to
+ * snap a stale underline back to whatever its original text is now.
+ */
+function findNearest(
+  haystack: string,
+  needle: string,
+  hint: number,
+): { start: number; end: number } | null {
+  if (!needle) return null;
+  let bestIdx = -1;
+  let bestDist = Infinity;
+  let cursor = 0;
+  while (cursor <= haystack.length - needle.length) {
+    const found = haystack.indexOf(needle, cursor);
+    if (found < 0) break;
+    const dist = Math.abs(found - hint);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestIdx = found;
+    }
+    cursor = found + 1;
+  }
+  return bestIdx < 0 ? null : { start: bestIdx, end: bestIdx + needle.length };
+}
+
+/**
+ * Whitespace-normalized + case-insensitive search. Builds a position map
+ * so a hit in the normalized text translates back to live-text positions.
+ * Handles NBSP vs space, smart-quote vs straight, double space vs single,
+ * em-dash vs hyphen, casing drift from autocorrect.
+ *
+ * The map flattens runs of whitespace AND non-ASCII typographic
+ * characters into their ASCII equivalents — so this is permissive on
+ * purpose. The caller still uses the returned offsets to slice the LIVE
+ * text, so we never insert wrong characters; we just find where to
+ * splice.
+ */
+function findNormalized(
+  liveText: string,
+  original: string,
+  hint: number,
+): { start: number; end: number } | null {
+  // Map typographic chars to their ASCII equivalents. Anything not in this
+  // map is normalized just by lowercase + whitespace-collapse.
+  const TYPO_MAP: Record<string, string> = {
+    ' ': ' ', // NBSP
+    ' ': ' ', // thin space
+    ' ': ' ', // narrow NBSP
+    '‘': "'", // left single
+    '’': "'", // right single
+    '“': '"', // left double
+    '”': '"', // right double
+    '–': '-', // en dash
+    '—': '-', // em dash
+    '…': '...', // ellipsis
+  };
+
+  // Build normalized string + per-position map back to liveText.
+  const normChars: string[] = [];
+  const map: number[] = []; // map[i] = index in liveText where normChars[i] starts
+  let prevWs = false;
+  for (let i = 0; i < liveText.length; i++) {
+    const c = liveText[i]!;
+    const mapped = TYPO_MAP[c] ?? c;
+    if (/^\s$/.test(mapped)) {
+      if (prevWs) continue;
+      normChars.push(' ');
+      map.push(i);
+      prevWs = true;
+      continue;
+    }
+    prevWs = false;
+    if (mapped.length === 1) {
+      normChars.push(mapped.toLowerCase());
+      map.push(i);
+    } else {
+      // multi-char (e.g. ellipsis → "..."), preserve mapping back to same i
+      for (const ch of mapped) {
+        normChars.push(ch.toLowerCase());
+        map.push(i);
+      }
+    }
+  }
+  const normLive = normChars.join('');
+
+  // Normalize the needle the same way (don't need a map — just searching).
+  const normNeedle = original
+    .split('')
+    .map((c) => TYPO_MAP[c] ?? c)
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+  if (!normNeedle.length) return null;
+
+  // Pick nearest occurrence to hint.
+  let bestNormIdx = -1;
+  let bestDist = Infinity;
+  let cursor = 0;
+  while (cursor <= normLive.length - normNeedle.length) {
+    const found = normLive.indexOf(normNeedle, cursor);
+    if (found < 0) break;
+    const liveApprox = map[found] ?? 0;
+    const dist = Math.abs(liveApprox - hint);
+    if (dist < bestDist) {
+      bestDist = dist;
+      bestNormIdx = found;
+    }
+    cursor = found + 1;
+  }
+  if (bestNormIdx < 0) return null;
+
+  const liveStart = map[bestNormIdx];
+  // End is the live position one past the last matched normalized char.
+  const lastNormIdx = bestNormIdx + normNeedle.length - 1;
+  const lastLiveIdx = map[lastNormIdx];
+  if (liveStart === undefined || lastLiveIdx === undefined) return null;
+  // The last char in liveText that participated in the match could be the
+  // start of a multi-char mapping (e.g. ellipsis). Step forward until the
+  // next mapped position changes, so we include all source chars.
+  let liveEnd = lastLiveIdx + 1;
+  while (liveEnd < liveText.length && map[lastNormIdx] === map[lastNormIdx + 1]) {
+    liveEnd++;
+  }
+  return { start: liveStart, end: liveEnd };
+}
+
 function issuesToUnderline(issues: CheckIssue[] | undefined, fullText: string): UnderlineIssue[] {
   if (!issues?.length) return [];
   const out: UnderlineIssue[] = [];
@@ -300,25 +430,33 @@ export abstract class BaseAdapter {
       return { start: issue.start, end: issue.end };
     }
     const liveText = this.getText(element);
-    const at = liveText.slice(issue.start, issue.end);
-    if (at === issue.original) {
+
+    // Fast path: cached offsets still point at the right text. Common case.
+    if (liveText.slice(issue.start, issue.end) === issue.original) {
       return { start: issue.start, end: issue.end };
     }
-    let bestIdx = -1;
-    let bestDist = Infinity;
-    let cursor = 0;
-    while (cursor <= liveText.length - issue.original.length) {
-      const found = liveText.indexOf(issue.original, cursor);
-      if (found < 0) break;
-      const dist = Math.abs(found - issue.start);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestIdx = found;
-      }
-      cursor = found + 1;
+
+    // Tier 1 — exact match anywhere. Pick the occurrence nearest the hint.
+    const exactHit = findNearest(liveText, issue.original, issue.start);
+    if (exactHit) return exactHit;
+
+    // Tier 2 — trim trailing/leading whitespace from `original` (the AI
+    // sometimes returns "word " with a trailing space that the live text
+    // doesn't have at that position).
+    const trimmed = issue.original.trim();
+    if (trimmed.length && trimmed.length !== issue.original.length) {
+      const trimHit = findNearest(liveText, trimmed, issue.start);
+      if (trimHit) return trimHit;
     }
-    if (bestIdx < 0) return null;
-    return { start: bestIdx, end: bestIdx + issue.original.length };
+
+    // Tier 3 — whitespace-normalized + case-insensitive search. Maps the
+    // hit back to live-text positions char by char. Handles NBSP vs space,
+    // smart-quote vs straight-quote, double space vs single, and casing
+    // drift from autocorrect.
+    const fuzzy = findNormalized(liveText, issue.original, issue.start);
+    if (fuzzy) return fuzzy;
+
+    return null;
   }
 
   protected applyIssue(element: HTMLElement, issue: UnderlineIssue): void {
