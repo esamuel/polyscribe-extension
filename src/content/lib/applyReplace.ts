@@ -33,9 +33,8 @@ import { rangeFromOffsets } from './editableText';
  * fail — at which point the editor is genuinely intransigent.
  */
 
-// Verbose tier-by-tier logging while we stabilise Apply across rich
-// editors. Flip to false once the matrix is reliable.
-const DEBUG = true;
+// Verbose tier-by-tier logging — flip to true to debug Apply on a new editor.
+const DEBUG = false;
 function dlog(...args: unknown[]): void {
   if (DEBUG) console.log('[Polyscribe replace]', ...args);
 }

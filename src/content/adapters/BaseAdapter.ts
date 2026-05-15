@@ -8,7 +8,25 @@ import type { CheckIssue, UnderlineIssue, UnderlineIssueType } from '../../lib/t
 import { Debouncer } from '../lib/debouncer';
 import { UnderlineOverlay } from '../overlay/UnderlineOverlay';
 import { TooltipManager } from '../overlay/TooltipManager';
+import { SentencePanel } from '../overlay/SentencePanel';
 import { SummaryChip } from '../overlay/SummaryChip';
+
+/**
+ * Pick the inline UI for a given issue. Short fixes (typos, single-word
+ * grammar) use the compact hover tooltip. Long fixes (whole-sentence
+ * rewrites, AI-tells with multi-word context) use the wider persistent
+ * SentencePanel — so the user can actually read both original and
+ * suggestion without the popup squeezing onto a 268px-wide bubble.
+ */
+function isLongIssue(issue: UnderlineIssue): boolean {
+  const origLen = issue.original.length;
+  const sugLen = issue.suggestion.length;
+  const wordCount = (s: string): number => s.trim().split(/\s+/).length;
+  // Heuristics tuned to match what users see as "a tiny fix" vs "a rewrite":
+  // - 28 chars or more in the original feels like a phrase, not a word.
+  // - 5+ words in either side means we're rewriting clauses, not letters.
+  return origLen > 28 || sugLen > 28 || wordCount(issue.original) > 4 || wordCount(issue.suggestion) > 4;
+}
 
 function parseIssueCategory(raw?: string): UnderlineIssueType {
   if (!raw) return 'grammar';
@@ -205,6 +223,7 @@ function issuesToUnderline(issues: CheckIssue[] | undefined, fullText: string): 
 export abstract class BaseAdapter {
   protected readonly overlay: UnderlineOverlay;
   protected readonly tooltip: TooltipManager;
+  protected readonly sentencePanel: SentencePanel;
   protected readonly summaryChip: SummaryChip;
   protected readonly debouncer: Debouncer;
   protected currentIssues: UnderlineIssue[] = [];
@@ -223,6 +242,7 @@ export abstract class BaseAdapter {
   constructor() {
     this.overlay = new UnderlineOverlay();
     this.tooltip = new TooltipManager();
+    this.sentencePanel = new SentencePanel();
     this.summaryChip = new SummaryChip();
     // 500ms (was 1500ms) — local spell-check fires on word boundaries for
     // instant feedback, so the cloud call here is just for grammar + style.
@@ -281,6 +301,7 @@ export abstract class BaseAdapter {
         );
         this.overlay.clear();
         this.tooltip.hide();
+        this.sentencePanel.hide();
         this.currentIssues = [];
       }
       return true;
@@ -305,6 +326,7 @@ export abstract class BaseAdapter {
     element.addEventListener('blur', () => {
       this.overlay.clear();
       this.tooltip.hide();
+      this.sentencePanel.hide();
       this.summaryChip.hide();
     });
 
@@ -317,6 +339,7 @@ export abstract class BaseAdapter {
     if (isExtensionContextInvalidated()) {
       this.overlay.clear();
       this.tooltip.hide();
+      this.sentencePanel.hide();
       this.summaryChip.hide();
       return;
     }
@@ -387,13 +410,32 @@ export abstract class BaseAdapter {
     for (const issue of issues) {
       const rects = this.getRangeRects(element, issue.start, issue.end);
       if (!rects.length) continue;
+      const longIssue = isLongIssue(issue);
       this.overlay.drawUnderline(issue, rects, {
-        onHover: (rect) =>
-          this.tooltip.show(issue, rect, {
-            onApply: () => this.applyIssue(element, issue),
-            onDismiss: () => this.dismissIssue(issue),
-          }),
-        onLeave: () => this.tooltip.scheduleHide(),
+        onHover: (rect) => {
+          if (longIssue) {
+            // Long suggestions get the wider persistent panel. Show it only
+            // when there's nothing already open — we don't want the panel
+            // to bounce around as the user moves between adjacent
+            // underlines.
+            this.tooltip.hide();
+            this.sentencePanel.show(issue, rect, {
+              onApply: () => this.applyIssue(element, issue),
+              onDismiss: () => this.dismissIssue(issue),
+            });
+          } else {
+            this.sentencePanel.hide();
+            this.tooltip.show(issue, rect, {
+              onApply: () => this.applyIssue(element, issue),
+              onDismiss: () => this.dismissIssue(issue),
+            });
+          }
+        },
+        onLeave: () => {
+          // Only the tooltip auto-hides on mouseleave; the panel is
+          // persistent (closes on Apply/Dismiss/outside-click/Escape).
+          if (!longIssue) this.tooltip.scheduleHide();
+        },
       });
     }
     // Show "Fix all (N)" chip whenever we have 2+ fixable issues. Counts only
@@ -472,6 +514,7 @@ export abstract class BaseAdapter {
       this.currentIssues = this.currentIssues.filter((i) => i.id !== issue.id);
       this.lastCheckedText = null;
       this.tooltip.hide();
+      this.sentencePanel.hide();
       this.renderUnderlines(element, this.currentIssues);
       return;
     }
@@ -480,13 +523,17 @@ export abstract class BaseAdapter {
       // The rich editor vetoed the insert (Draft.js / Lexical can refuse).
       // Surface this loudly so the user isn't stuck wondering why Apply
       // appeared to do nothing — clipboard the suggestion as a fallback AND
-      // flash the tooltip so the cue is visible without opening DevTools.
+      // flash whichever UI is showing so the cue is visible without DevTools.
       console.warn(
         'Polyscribe: Apply blocked — the editor (Draft.js / Lexical / etc.) refused the insertText command. ' +
           'Suggestion copied to clipboard as fallback.',
       );
       void navigator.clipboard.writeText(issue.suggestion).catch(() => undefined);
-      this.tooltip.flashApplied('Copied to clipboard');
+      if (isLongIssue(issue)) {
+        this.sentencePanel.flashApplied('Copied to clipboard');
+      } else {
+        this.tooltip.flashApplied('Copied to clipboard');
+      }
       return;
     }
     // Bump the seq so any in-flight runCheck that resolves after this point
@@ -501,7 +548,8 @@ export abstract class BaseAdapter {
           : i,
       );
     this.lastCheckedText = null;
-    this.tooltip.hide();
+    // Don't hide tooltip/panel here — the click handler in each UI does its
+    // own "Applied" flash and self-hides after the confirmation window.
     this.renderUnderlines(element, this.currentIssues);
   }
 
@@ -509,6 +557,7 @@ export abstract class BaseAdapter {
     this.checkRequestSeq++;
     this.currentIssues = this.currentIssues.filter((i) => i.id !== issue.id);
     this.tooltip.hide();
+    this.sentencePanel.hide();
     if (this.activeElement) this.renderUnderlines(this.activeElement, this.currentIssues);
   }
 
@@ -529,6 +578,7 @@ export abstract class BaseAdapter {
     this.checkRequestSeq++;
     this.summaryChip.setLoading(true);
     this.tooltip.hide();
+    this.sentencePanel.hide();
 
     // Walk right-to-left so each replacement leaves earlier-offset issues
     // untouched. **Skip on failure instead of bailing on the first veto** —
