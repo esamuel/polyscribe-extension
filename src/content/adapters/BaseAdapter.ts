@@ -465,10 +465,14 @@ export abstract class BaseAdapter {
     // the case where the user kept typing between check and Apply.
     const live = this.rebindIssueOffsets(element, issue);
     if (!live) {
-      console.warn(
-        `Polyscribe: Apply skipped — "${issue.original}" is no longer in the document.`,
-      );
+      // Not an error: the user almost certainly fixed the typo manually
+      // (or otherwise edited it away) between the check completing and
+      // their click. Drop the stale underline silently and let the next
+      // debounced re-check produce fresh issues.
+      this.currentIssues = this.currentIssues.filter((i) => i.id !== issue.id);
+      this.lastCheckedText = null;
       this.tooltip.hide();
+      this.renderUnderlines(element, this.currentIssues);
       return;
     }
     const ok = this.replaceRange(element, live.start, live.end, issue.suggestion);
@@ -531,18 +535,20 @@ export abstract class BaseAdapter {
     // previously a single Draft.js/Lexical refusal stopped the whole batch
     // and the user saw "Fix all" do nothing. Now we apply what we can.
     const applied = new Set<string>();
-    const skipped: Array<{ id: string; reason: 'drift' | 'veto' | 'gone' }> = [];
+    // Only true failures count as skipped — `gone` issues (user fixed
+    // them manually) are silently dropped above and shouldn't influence
+    // the "Fixed M of N" message or trigger the clipboard fallback.
+    const skipped: Array<{ id: string; reason: 'veto' }> = [];
+    const goneIds = new Set<string>();
     for (const issue of fixable) {
       // Re-find each issue's anchor in the live text. Cached offsets can be
       // wildly off (the user typed a whole sentence above between the check
       // and this click). If `original` is still somewhere in the document,
-      // use the nearest occurrence. If it's gone entirely, then skip.
+      // use the nearest occurrence. If it's gone entirely, drop it from the
+      // count silently — the user already fixed it themselves.
       const live = this.rebindIssueOffsets(element, issue);
       if (!live) {
-        console.warn(
-          `Polyscribe: Fix all — "${issue.original}" no longer in document, skipping.`,
-        );
-        skipped.push({ id: issue.id, reason: 'gone' });
+        goneIds.add(issue.id);
         continue;
       }
       const ok = this.replaceRange(element, live.start, live.end, issue.suggestion);
@@ -558,7 +564,11 @@ export abstract class BaseAdapter {
 
     // Keep skipped issues onscreen so the user can see what didn't apply
     // and decide what to do (retry, edit manually, dismiss).
-    this.currentIssues = this.currentIssues.filter((i) => !applied.has(i.id));
+    // Drop both applied AND silently-gone issues from currentIssues so the
+    // stale underlines vanish along with the freshly-applied ones.
+    this.currentIssues = this.currentIssues.filter(
+      (i) => !applied.has(i.id) && !goneIds.has(i.id),
+    );
     // Invalidate the dedupe cache so the next debounce re-checks the now-
     // edited text instead of skipping as a no-op.
     this.lastCheckedText = null;
@@ -591,9 +601,11 @@ export abstract class BaseAdapter {
       }
     }
 
-    // Surface the outcome on the chip itself (not just console) — the user
-    // shouldn't have to open devtools to know what happened.
-    this.summaryChip.showResult(applied.size, fixable.length, copiedToClipboard);
+    // Surface the outcome on the chip — denominator excludes silently-gone
+    // issues so the user sees "Fixed 2 of 2" rather than the misleading
+    // "Fixed 2 of 3" when they hand-fixed one themselves.
+    const attempted = fixable.length - goneIds.size;
+    this.summaryChip.showResult(applied.size, attempted, copiedToClipboard);
 
     // Re-render underlines for the remaining issues, then hide the chip
     // after a short window if everything applied (success state).
