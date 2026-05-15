@@ -187,54 +187,73 @@ export function applyContentEditableReplace(
   const ownerDoc = element.ownerDocument ?? document;
   const ownerWin = ownerDoc.defaultView ?? window;
 
-  element.focus();
+  // CRITICAL for iframe editors (Gmail compose): focus the iframe's window
+  // FIRST, then the editable. Without this, the inline tooltip's Apply
+  // looks like it did nothing because `execCommand` runs against the wrong
+  // document. The overlay's `applyTextToRange` does this and works fine —
+  // we just weren't doing it here.
+  if (ownerWin !== window) {
+    try {
+      ownerWin.focus();
+    } catch {
+      /* cross-origin or detached — ignore */
+    }
+  }
+  try {
+    element.focus({ preventScroll: true });
+  } catch {
+    try {
+      element.focus();
+    } catch {
+      dlog('element.focus failed — abort');
+      return false;
+    }
+  }
 
   const initialText = element.textContent ?? '';
 
   // Each strategy gets a fresh selection (some editors clear it after
-  // refusing to handle a synthetic event, leaving subsequent strategies
-  // operating on the wrong range).
+  // refusing to handle a synthetic event).
   const trySelection = (): boolean => !!resetSelection(ownerWin, range);
 
-  // ── Strategy 1: insertReplacementText (PM/Lexical spell-check path) ──
-  if (trySelection() && tryInsertReplacementText(element, range, replacement)) {
-    if ((element.textContent ?? '') !== initialText) {
-      dlog('strategy 1 succeeded synchronously');
-      return true;
-    }
-    // Editor may apply on next tick (PM batches). Trust the accepted=true
-    // result — the user will see the change after the editor's microtask.
-    dlog('strategy 1 accepted, deferred apply assumed');
-    return true;
-  }
-
-  // ── Strategy 2: synthetic paste ──
-  if (trySelection() && tryPaste(element, replacement)) {
-    if ((element.textContent ?? '') !== initialText) {
-      dlog('strategy 2 succeeded synchronously');
-      return true;
-    }
-    dlog('strategy 2 accepted, deferred apply assumed');
-    return true;
-  }
-
-  // ── Strategy 3: legacy execCommand insertText ──
+  // ── Strategy 1: execCommand('insertText') ─────────────────────────────
+  // Synchronous; returns a real boolean. Works for Gmail Lexical, Quill,
+  // plain contenteditable. Fails (returns false) on ProseMirror because PM
+  // preventDefault's the underlying beforeinput — we then fall through.
   if (
     trySelection() &&
     tryExecInsertText(ownerDoc, replacement) &&
     (element.textContent ?? '') !== initialText
   ) {
-    dlog('strategy 3 succeeded');
+    dlog('strategy 1 (execCommand) succeeded');
     return true;
   }
 
-  // ── Strategy 4: direct DOM mutation (last resort) ──
+  // ── Strategy 2: insertReplacementText (ProseMirror spell-check path) ──
+  // PM, Lexical, Slate all special-case this exact inputType because it's
+  // what Chrome's native spell-check dispatches. PM commits async (on its
+  // own microtask), so a synchronous text-change check would fail even on
+  // success — we trust `accepted = !preventDefault()` here.
+  if (trySelection() && tryInsertReplacementText(element, range, replacement)) {
+    dlog('strategy 2 (insertReplacementText) accepted');
+    return true;
+  }
+
+  // ── Strategy 3: synthetic paste ───────────────────────────────────────
+  // Broad fallback. Editors handle paste robustly; undo history will read
+  // "paste" instead of "type" but the edit lands.
+  if (trySelection() && tryPaste(element, replacement)) {
+    dlog('strategy 3 (paste) accepted');
+    return true;
+  }
+
+  // ── Strategy 4: direct DOM mutation (last resort) ─────────────────────
   if (
     trySelection() &&
     tryDomMutation(element, ownerDoc, range, replacement) &&
     (element.textContent ?? '') !== initialText
   ) {
-    dlog('strategy 4 succeeded');
+    dlog('strategy 4 (DOM mutation) succeeded');
     return true;
   }
 
