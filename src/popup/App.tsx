@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { BookOpen, ExternalLink, Info, Settings as SettingsIcon } from 'lucide-react';
 import { getSettings } from '../lib/storage';
-import type { Settings } from '../lib/types';
+import { DEFAULT_SETTINGS, type Settings } from '../lib/types';
 import { ManualCheckView } from './ManualCheckView';
 import { SettingsView } from './SettingsView';
 
@@ -10,9 +10,24 @@ type Tab = 'check' | 'settings' | 'about';
 export function App() {
   const [tab, setTab] = useState<Tab>('check');
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
-    void getSettings().then(setSettings);
+    let alive = true;
+    getSettings()
+      .then((s) => {
+        if (alive) setSettings(s);
+      })
+      .catch((e: unknown) => {
+        // Never leave the popup stuck on the loading spinner: surface the
+        // error and fall back to defaults so the UI still renders.
+        if (!alive) return;
+        setLoadError(e instanceof Error ? e.message : String(e));
+        setSettings({ ...DEFAULT_SETTINGS });
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const needsToken = useMemo(() => {
@@ -70,6 +85,12 @@ export function App() {
             </button>
           </div>
         </div>
+        {loadError ? (
+          <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
+            Couldn’t load saved settings: <span className="font-mono">{loadError}</span>. Using
+            defaults — try reloading the extension.
+          </div>
+        ) : null}
         {needsToken ? (
           <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
             Add your <span className="font-semibold">API token</span> in Settings (from the web app).
