@@ -189,21 +189,45 @@ async function refreshSettings(): Promise<void> {
 
 void refreshSettings().catch(() => undefined);
 
+// Install at most once per page. Without this guard, re-running on a
+// settings change would spin up a second adapter (duplicate MutationObservers,
+// overlays, and storage listeners).
+let inlineInstalled = false;
+
 async function maybeInstallInlineUnderlines(): Promise<void> {
+  if (inlineInstalled) return;
+  // Claim the slot synchronously, BEFORE the first await. Otherwise the
+  // initial call and a load-time storage.onChanged call can both pass the
+  // guard during `await getSettings()` and install twice (leaking a second
+  // MutationObserver). Release the claim on any path that didn't install.
+  inlineInstalled = true;
   try {
     const s = await getSettings();
-    if (!s.apiToken?.trim() || s.enableInlineUnderlines === false) return;
+    if (!s.apiToken?.trim() || s.enableInlineUnderlines === false) {
+      inlineInstalled = false;
+      return;
+    }
     const adapter = pickAdapter();
-    if (adapter) adapter.install();
+    if (adapter) {
+      adapter.install();
+    } else {
+      inlineInstalled = false; // unsupported page — allow a later retry
+    }
   } catch {
-    /* ignore */
+    inlineInstalled = false;
   }
 }
 void maybeInstallInlineUnderlines();
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
-  if (changes.polyscribeSettings) void refreshSettings().catch(() => undefined);
+  if (changes.polyscribeSettings) {
+    void refreshSettings().catch(() => undefined);
+    // Token added / inline underlines turned on after the tab was already
+    // open — attach now instead of forcing a manual page reload. (No-op if
+    // already installed, thanks to the inlineInstalled guard.)
+    void maybeInstallInlineUnderlines();
+  }
 });
 
 function isTwitterComposingShort(): boolean {
