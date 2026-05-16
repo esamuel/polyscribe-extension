@@ -234,6 +234,11 @@ export abstract class BaseAdapter {
   /** Monotonic id so an in-flight check that resolves late can't overwrite
    *  newer `currentIssues` (e.g. after the user applied or dismissed). */
   private checkRequestSeq = 0;
+  /** Inline auto-checks consumed since this page loaded, shared across every
+   *  adapter/editor on the page so a long writing session can't run up an
+   *  unbounded API bill. Reset only by a full page reload (static = per
+   *  document context). */
+  private static inlineChecksUsed = 0;
   private mutationTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly onWinResize = (): void => {
     if (this.activeElement) this.repositionUnderlines(this.activeElement);
@@ -361,12 +366,21 @@ export abstract class BaseAdapter {
       const s = await getSettings();
       const lang = s.defaultLanguage === 'auto' ? 'auto' : s.defaultLanguage;
 
-      // Fire grammar + AI-tells in parallel. Two API calls per debounce —
-      // ~2× spend but the AI-tell underlines (the moat vs. Grammarly) show
-      // up automatically without the user having to discover the overlay.
+      // Per-page cost ceiling: once the quota is spent, stop auto-checking
+      // inline. The overlay panel (manual) and selection checks are
+      // unaffected; the counter resets on a full page reload.
+      if (BaseAdapter.inlineChecksUsed >= s.autoCheckQuotaPerPage) {
+        return;
+      }
+
+      // Grammar always; AI-tells only when the user opted in (it doubles
+      // spend per pass). The overlay "AI tells" tab still works on demand
+      // regardless of this setting.
       const [grammarResult, aiResult] = await Promise.all([
         requestCheckFromSw(text, lang),
-        requestAiCheckFromSw(text, lang),
+        s.enableInlineAiTells
+          ? requestAiCheckFromSw(text, lang)
+          : Promise.resolve(null),
       ]);
 
       // Drop late results that have been superseded by a newer check —
@@ -375,11 +389,16 @@ export abstract class BaseAdapter {
       if (seq !== this.checkRequestSeq) return;
 
       // Bail completely only if BOTH failed; otherwise show what we got.
+      // NOTE: count the quota only here — a pass that produced no result
+      // (network/auth failure, invalidated context) cost nothing, so it
+      // must not burn quota or a flaky connection would permanently lock
+      // out inline checks without a single successful one.
       if (!grammarResult && !aiResult) {
         this.currentIssues = [];
         this.overlay.clear();
         return;
       }
+      BaseAdapter.inlineChecksUsed += 1;
 
       // Stale-text guard: the user kept typing during the round-trip.
       if (this.getText(element) !== text) return;

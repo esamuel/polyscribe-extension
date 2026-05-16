@@ -35,9 +35,12 @@ export function App() {
     return !settings.apiToken.trim();
   }, [settings]);
 
+  // Single source of truth for the web origin so the Open/Privacy/Terms
+  // links can't drift from each other or from DEFAULT_SETTINGS.
+  const webBase = (settings?.apiBaseUrl || DEFAULT_SETTINGS.apiBaseUrl).replace(/\/$/, '');
+
   const openWeb = (): void => {
-    const base = (settings?.apiBaseUrl || 'https://polyscribe.app').replace(/\/$/, '');
-    window.open(base, '_blank', 'noopener,noreferrer');
+    window.open(webBase, '_blank', 'noopener,noreferrer');
   };
 
   const version = chrome.runtime.getManifest().version;
@@ -150,8 +153,9 @@ export function App() {
         {tab === 'about' ? (
           <div className="space-y-3 text-sm text-gray-800">
             <p className="text-xs text-gray-600">
-              Writing assistant for the other 94% of the world&apos;s languages — grammar, tone, rewrite, and
-              translation across 17 languages.
+              Writing assistant for the other 94% of the world&apos;s languages. Inline grammar,
+              spelling, and AI-tell underlines plus tone, rewrite, and 17-language translation —
+              on Gmail, ChatGPT, LinkedIn, X, WhatsApp Web, and any text field.
             </p>
             <button
               type="button"
@@ -164,14 +168,24 @@ export function App() {
               <span className="font-medium text-gray-700">Tip:</span> Use the in-page button or
               right-click → Polyscribe on any site. Reload the page if the extension was updated.
             </p>
-            <a
-              className="inline-flex text-xs font-semibold text-indigo-700 hover:text-indigo-900"
-              href="https://github.com/yourusername/polyscribe-extension"
-              target="_blank"
-              rel="noreferrer"
-            >
-              GitHub
-            </a>
+            <div className="flex gap-4">
+              <a
+                className="inline-flex text-xs font-semibold text-indigo-700 hover:text-indigo-900"
+                href={`${webBase}/privacy`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Privacy
+              </a>
+              <a
+                className="inline-flex text-xs font-semibold text-indigo-700 hover:text-indigo-900"
+                href={`${webBase}/terms`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Terms
+              </a>
+            </div>
           </div>
         ) : null}
       </div>

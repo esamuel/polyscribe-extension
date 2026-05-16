@@ -159,6 +159,23 @@ export function SettingsView({ settings, onSaved }: Props) {
               onChange={(e) => setDraft({ ...draft, enableInlineUnderlines: e.target.checked })}
             />
           </label>
+          <label className="flex items-start justify-between gap-3 rounded-lg border border-gray-200 px-3 py-2">
+            <span className="text-sm text-gray-800">
+              <span className="font-medium">Also flag AI-sounding text inline</span>
+              <span className="mt-0.5 block text-[11px] text-gray-500">
+                Adds AI-tell underlines on every typing pause, on top of grammar. Off by default —
+                it roughly doubles API usage. The overlay&apos;s “AI tells” tab still works on
+                demand when this is off.
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              className="mt-1"
+              disabled={!draft.enableInlineUnderlines}
+              checked={draft.enableInlineAiTells}
+              onChange={(e) => setDraft({ ...draft, enableInlineAiTells: e.target.checked })}
+            />
+          </label>
           <div>
             <label className="mb-1 block text-xs font-semibold text-gray-600">
               Auto-check quota per page
@@ -179,7 +196,36 @@ export function SettingsView({ settings, onSaved }: Props) {
                 })
               }
             />
-            <p className="mt-0.5 text-[11px] text-gray-500">Prevents runaway checks (5–100 per page load).</p>
+            <p className="mt-0.5 text-[11px] text-gray-500">
+              Caps automatic checks per browser tab — covers both selection and inline auto-checks.
+              Resets on a full page reload (on single-page apps like Gmail it resets when the tab
+              is reloaded, not on in-app navigation).
+            </p>
+          </div>
+          <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-[11px] leading-relaxed text-gray-600">
+            <span className="font-semibold text-gray-700">What gets sent:</span> Checks run on
+            Polyscribe&apos;s API, so the relevant text leaves your browser.
+            <span className="mt-1 block">
+              • <span className="font-medium">Selection check:</span> the text you select is sent
+              when a check runs.
+            </span>
+            <span className="mt-0.5 block">
+              • <span className="font-medium">Inline underlines:</span> the active field&apos;s text
+              is sent shortly after you stop typing.
+            </span>
+            <span className="mt-1 block">
+              Nothing is sent until you trigger a check or type in a supported field, and only while
+              these options are on. See the{' '}
+              <a
+                className="font-semibold text-indigo-600 hover:text-indigo-800"
+                href={`${baseForLinks}/privacy`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                privacy policy
+              </a>
+              .
+            </span>
           </div>
         </div>
       </div>

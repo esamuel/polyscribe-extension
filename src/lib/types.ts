@@ -9,8 +9,15 @@ export type Settings = {
   enableFloatingButton: boolean;
   /** Inline underlines on Gmail, ChatGPT, LinkedIn, X, WhatsApp (when configured). */
   enableInlineUnderlines: boolean;
+  /**
+   * Also run AI-tell detection inline (in addition to grammar) on every
+   * typing pause. Off by default: it doubles API spend per check and the
+   * overlay's "AI tells" tab still works on demand. Power-user opt-in.
+   */
+  enableInlineAiTells: boolean;
   autoCheckOnSelection: boolean;
-  /** Max automatic grammar checks per full page load (5–100). */
+  /** Max automatic checks per full page load (5–100). Applies to both
+   *  selection auto-checks and inline-underline auto-checks. */
   autoCheckQuotaPerPage: number;
   defaultTone: 'formal' | 'casual' | 'friendly' | 'professional' | 'concise';
 };
@@ -23,6 +30,7 @@ export const DEFAULT_SETTINGS: Settings = {
   defaultTranslateTarget: 'en',
   enableFloatingButton: true,
   enableInlineUnderlines: true,
+  enableInlineAiTells: false,
   autoCheckOnSelection: true,
   autoCheckQuotaPerPage: 20,
   defaultTone: 'professional',
