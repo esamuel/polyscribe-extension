@@ -19,6 +19,7 @@ function optLabel(code: LanguageCode | 'auto'): string {
 export function SettingsView({ settings, onSaved }: Props) {
   const [draft, setDraft] = useState<Settings>(settings);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testMsg, setTestMsg] = useState<string | null>(null);
 
@@ -31,6 +32,9 @@ export function SettingsView({ settings, onSaved }: Props) {
       const next = await saveSettings(draft);
       onSaved(next);
       setTestMsg(null);
+      setSaved(true);
+      // Clear the confirmation after a moment so it doesn't linger forever.
+      window.setTimeout(() => setSaved(false), 2500);
     } finally {
       setSaving(false);
     }
@@ -106,6 +110,11 @@ export function SettingsView({ settings, onSaved }: Props) {
           >
             Reset
           </button>
+          {saved && !dirty ? (
+            <span className="inline-flex items-center self-center text-sm font-semibold text-green-600">
+              ✓ Saved
+            </span>
+          ) : null}
         </div>
         {testMsg ? (
           <div className="mt-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-800">
