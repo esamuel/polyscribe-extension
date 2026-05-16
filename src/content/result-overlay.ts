@@ -224,22 +224,42 @@ function formatRuntimeError(message: string | undefined): string {
 
 async function sendRequest(req: PolyscribeRequest): Promise<PolyscribeResponse> {
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (r: PolyscribeResponse): void => {
+      if (settled) return;
+      settled = true;
+      resolve(r);
+    };
+    // Last-resort guard: the API layer already times out at 90s, but if the
+    // service worker is evicted/crashes mid-request the sendMessage callback
+    // may never fire AND no lastError is raised — the panel would hang on
+    // "Working…" indefinitely. Must stay strictly > the API timeout so the
+    // specific "timed out" message wins over this generic one.
+    const guard = setTimeout(() => {
+      finish({
+        ok: false,
+        error: 'No response from the extension. Reload the page and try again.',
+        code: 'NETWORK',
+      });
+    }, 95_000);
     try {
       chrome.runtime.sendMessage(req, (resp) => {
+        clearTimeout(guard);
         const err = chrome.runtime.lastError;
         if (err) {
-          resolve({
+          finish({
             ok: false,
             error: formatRuntimeError(err.message),
             code: 'NETWORK',
           });
           return;
         }
-        resolve(resp as PolyscribeResponse);
+        finish(resp as PolyscribeResponse);
       });
     } catch (e) {
+      clearTimeout(guard);
       const msg = e instanceof Error ? e.message : String(e);
-      resolve({
+      finish({
         ok: false,
         error: formatRuntimeError(msg),
         code: 'NETWORK',

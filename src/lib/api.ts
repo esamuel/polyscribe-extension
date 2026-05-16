@@ -73,6 +73,35 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * fetch with a hard timeout. Without this, a stalled web-app request never
+ * settles, so the service worker never calls sendResponse and the in-page
+ * panel sits on "Working…" forever. On timeout we throw a NETWORK ApiError
+ * that the UI surfaces as an error the user can retry.
+ */
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new ApiError(
+        `Request timed out after ${Math.round(timeoutMs / 1000)}s. The server may be busy — try again.`,
+      );
+    }
+    // Network failure (offline, DNS, CORS) — normalize to ApiError so the
+    // panel shows a message instead of hanging or throwing raw.
+    throw new ApiError(e instanceof Error ? e.message : 'Network request failed.');
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function apiCall<T>(path: string, body: unknown): Promise<T> {
   const { apiBaseUrl, apiToken } = await getSettings();
   const base = apiBaseUrl.replace(/\/$/, '');
@@ -83,14 +112,21 @@ async function apiCall<T>(path: string, body: unknown): Promise<T> {
       'CONFIG',
     );
   }
-  const res = await fetch(`${base}${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiToken}`,
+  // 90s: LLM endpoints (Sonnet on long text) are legitimately slow; this is
+  // a safety net for a truly stuck request, not a tight SLA. Kept generous so
+  // we don't abort slow-but-successful long checks.
+  const res = await fetchWithTimeout(
+    `${base}${path}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiToken}`,
+      },
+      body: JSON.stringify(body),
     },
-    body: JSON.stringify(body),
-  });
+    90_000,
+  );
   if (res.status === 401) {
     throw new ApiError('Your token was revoked. Update it in the popup settings.', 401, 'UNAUTHORIZED');
   }
@@ -151,10 +187,11 @@ export async function healthCheck(): Promise<HealthResponse> {
       'CONFIG',
     );
   }
-  const res = await fetch(`${base}/api/health`, {
-    method: 'GET',
-    headers: { Authorization: `Bearer ${apiToken}` },
-  });
+  const res = await fetchWithTimeout(
+    `${base}/api/health`,
+    { method: 'GET', headers: { Authorization: `Bearer ${apiToken}` } },
+    15_000,
+  );
   if (res.status === 401) {
     throw new ApiError('Your token was revoked. Update it in the popup settings.', 401, 'UNAUTHORIZED');
   }
