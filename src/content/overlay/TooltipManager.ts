@@ -22,52 +22,64 @@ export class TooltipManager {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         background: white;
         border: 1px solid #e5e7eb;
-        border-radius: 10px;
+        border-radius: 12px;
         box-shadow: 0 8px 24px rgba(0,0,0,0.18);
-        /** Slimmer + tighter than the original 320×~200 — leaves more page
-         *  text visible in the side-placement layout. */
-        padding: 12px;
-        width: 268px;
+        /** Stacked Grammarly-style card: category → suggestion → actions.
+         *  Narrow + side-placed so page text stays visible. */
+        padding: 14px 16px;
+        width: 248px;
         pointer-events: auto;
         animation: fadeIn 150ms ease-out;
+        position: relative;
       }
       @keyframes fadeIn {
         from { opacity: 0; transform: translateY(-4px); }
         to   { opacity: 1; transform: translateY(0); }
       }
-      .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-      .type-label { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; }
-      .grammar { color: #2563eb; }
-      .spelling { color: #dc2626; }
-      .punctuation { color: #ea580c; }
-      .style { color: #9333ea; }
-      .ai-tell { color: #0d9488; }
-      .change { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; font-size: 14px; line-height: 1.3; }
-      .original { text-decoration: line-through; color: #ef4444; background: #fef2f2; padding: 1px 5px; border-radius: 4px; }
-      .arrow { color: #9ca3af; }
-      .suggestion { color: #047857; background: #ecfdf5; padding: 1px 5px; border-radius: 4px; font-weight: 500; }
-      .suggestion.deletion { color: #92400e; background: #fef3c7; font-style: italic; }
-      .btn-delete { background: #b45309; }
-      .btn-delete:hover { background: #92400e; }
-      .btn-delete:disabled { background: #78350f; }
-      .why { font-size: 12px; color: #6b7280; font-style: italic; border-left: 2px solid #e5e7eb; padding-left: 10px; margin-bottom: 8px; line-height: 1.4; }
-      .actions { display: flex; gap: 6px; align-items: center; }
-      .btn-apply {
-        flex: 1; background: #0d9488; color: white;
-        padding: 6px 10px; border: none; border-radius: 6px;
-        font-size: 12px; font-weight: 600; cursor: pointer;
+      /* padding-right reserves room so a long word never runs under the
+         absolutely-positioned close (×). Mirrored for RTL below. */
+      .cat { font-size: 12px; color: #6b7280; font-weight: 500; margin-bottom: 8px; padding-right: 16px; }
+      /* The suggestion IS the primary action — click it to apply (Grammarly
+         pattern). Colored by issue type; our palette, not Grammarly's. */
+      .suggest {
+        display: block; width: 100%; text-align: left;
+        background: transparent; border: none; padding: 0;
+        font-size: 19px; font-weight: 700; line-height: 1.25;
+        cursor: pointer; word-break: break-word;
       }
-      .btn-apply:hover { background: #0f766e; }
-      .btn-apply:disabled { background: #047857; cursor: default; opacity: 0.95; }
-      .btn-dismiss {
-        background: transparent; color: #4b5563;
-        padding: 6px 10px; border: none; border-radius: 6px;
-        font-size: 12px; cursor: pointer;
+      .suggest:hover { opacity: 0.78; }
+      .suggest:disabled { cursor: default; opacity: 1; }
+      .suggest.grammar { color: #2563eb; }
+      .suggest.spelling { color: #dc2626; }
+      .suggest.punctuation { color: #ea580c; }
+      .suggest.style { color: #9333ea; }
+      .suggest.ai-tell { color: #0d9488; }
+      .suggest.deletion { color: #b45309; font-style: italic; font-size: 16px; }
+      .suggest.done { color: #047857; font-size: 16px; font-style: normal; }
+      .hint { font-size: 11px; color: #9ca3af; margin-top: 5px; }
+      .why {
+        font-size: 12px; color: #6b7280; font-style: italic;
+        border-left: 2px solid #e5e7eb; padding-left: 10px;
+        margin: 10px 0 0; line-height: 1.4;
       }
-      .btn-dismiss:hover { background: #f3f4f6; }
-      .btn-why { background: transparent; color: #9ca3af; border: none; padding: 6px; cursor: pointer; font-size: 12px; }
-      .close { background: transparent; border: none; color: #9ca3af; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 4px; }
+      .actions { display: flex; align-items: center; gap: 16px; margin-top: 14px; }
+      .row-btn {
+        display: flex; align-items: center; gap: 6px;
+        background: transparent; border: none; padding: 0;
+        color: #6b7280; font-size: 13px; cursor: pointer;
+      }
+      .row-btn:hover { color: #374151; }
+      .row-btn svg { width: 14px; height: 14px; flex: none; }
+      .close {
+        position: absolute; top: 8px; right: 10px;
+        background: transparent; border: none; color: #d1d5db;
+        cursor: pointer; font-size: 15px; line-height: 1; padding: 2px;
+      }
+      .close:hover { color: #6b7280; }
       [dir="rtl"] { direction: rtl; }
+      [dir="rtl"] .suggest { text-align: right; }
+      [dir="rtl"] .cat { padding-right: 0; padding-left: 16px; }
+      [dir="rtl"] .close { right: auto; left: 10px; }
     `;
     this.shadow.appendChild(style);
   }
@@ -104,21 +116,40 @@ export class TooltipManager {
     const tooltip = document.createElement('div');
     tooltip.className = 'tooltip';
     if (isRTL) tooltip.setAttribute('dir', 'rtl');
+    // Friendly category line (Grammarly's "Fix capitalization" slot). We only
+    // have a coarse type, so map it to a readable phrase.
+    const CAT_LABELS: Record<string, string> = {
+      grammar: 'Fix grammar',
+      spelling: 'Fix spelling',
+      punctuation: 'Fix punctuation',
+      style: 'Improve wording',
+      'ai-tell': 'Sounds AI-written',
+    };
+    const catLabel = isDeletion
+      ? 'Remove this text'
+      : CAT_LABELS[issue.type] ?? 'Suggestion';
+
+    // The suggestion itself is the click target — tell the user what the
+    // click does (copy in read-only contexts, otherwise apply/delete).
+    const hintText =
+      applyLabel === 'Apply'
+        ? 'Click to apply'
+        : applyLabel === 'Delete'
+          ? 'Click to delete'
+          : `Click to ${applyLabel.toLowerCase()}`;
+
     tooltip.innerHTML = `
-      <div class="header">
-        <span class="type-label ${issue.type}">${issue.type.toUpperCase()}</span>
-        <button type="button" class="close" data-action="close">×</button>
-      </div>
-      <div class="change">
-        <span class="original">${escapeHtml(issue.original)}</span>
-        <span class="arrow">→</span>
-        ${isDeletion ? '<span class="suggestion deletion">⌫ Delete</span>' : `<span class="suggestion">${escapeHtml(issue.suggestion)}</span>`}
-      </div>
+      <button type="button" class="close" data-action="close" aria-label="Close">×</button>
+      <div class="cat">${escapeHtml(catLabel)}</div>
+      <button type="button" class="suggest ${issue.type}${isDeletion ? ' deletion' : ''}" data-action="apply">${isDeletion ? '⌫ Delete this text' : escapeHtml(issue.suggestion)}</button>
+      <div class="hint">${escapeHtml(hintText)}</div>
       <div class="why" style="display:none">${escapeHtml(issue.explanation)}</div>
       <div class="actions">
-        <button type="button" class="btn-apply${isDeletion ? ' btn-delete' : ''}" data-action="apply">${escapeHtml(applyLabel)}</button>
-        <button type="button" class="btn-dismiss" data-action="dismiss">Dismiss</button>
-        <button type="button" class="btn-why" data-action="why" title="Why?">?</button>
+        <button type="button" class="row-btn" data-action="dismiss">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          <span>Dismiss</span>
+        </button>
+        <button type="button" class="row-btn" data-action="why">Why?</button>
       </div>
     `;
     // CRITICAL: prevent focus theft on mousedown — directly on EACH button.
@@ -143,9 +174,10 @@ export class TooltipManager {
         // Briefly flash the post-click confirmation so the user knows their
         // click landed — especially important for read-only Copy mode where
         // nothing in the source text changes visibly.
-        const btn = tooltip.querySelector<HTMLButtonElement>('.btn-apply');
+        const btn = tooltip.querySelector<HTMLButtonElement>('.suggest');
         if (btn) {
-          btn.textContent = appliedLabel;
+          btn.textContent = `✓ ${appliedLabel}`;
+          btn.classList.add('done');
           btn.disabled = true;
           // Assign to this.hideTimer so the existing mouseenter listener
           // can cancel it — otherwise the tooltip vanishes mid-hover even
@@ -230,9 +262,10 @@ export class TooltipManager {
    * No-op if the tooltip isn't open.
    */
   flashApplied(label: string): void {
-    const btn = this.shadow.querySelector<HTMLButtonElement>('.tooltip .btn-apply');
+    const btn = this.shadow.querySelector<HTMLButtonElement>('.tooltip .suggest');
     if (!btn) return;
-    btn.textContent = label;
+    btn.textContent = `✓ ${label}`;
+    btn.classList.add('done');
     btn.disabled = true;
     if (this.hideTimer) clearTimeout(this.hideTimer);
     this.hideTimer = window.setTimeout(() => this.hide(), 1200);
