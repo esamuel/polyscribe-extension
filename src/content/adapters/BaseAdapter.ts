@@ -240,15 +240,47 @@ export abstract class BaseAdapter {
    *  document context). */
   private static inlineChecksUsed = 0;
   private mutationTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Cached `forceOverCompetingExtension` — read sync by `competingSkip`
+   *  (which fires on every listener tick, so it can't await getSettings).
+   *  Refreshed on load and whenever settings change. */
+  private overrideCompetitors = false;
   private readonly onWinResize = (): void => {
     if (this.activeElement) this.repositionUnderlines(this.activeElement);
   };
+  private readonly onSettingsChanged = (
+    changes: Record<string, chrome.storage.StorageChange>,
+    area: string,
+  ): void => {
+    if (area === 'local' && changes.polyscribeSettings) {
+      void this.refreshCoexistencePref();
+    }
+  };
+
+  private async refreshCoexistencePref(): Promise<void> {
+    try {
+      const s = await getSettings();
+      const was = this.overrideCompetitors;
+      this.overrideCompetitors = s.forceOverCompetingExtension === true;
+      // If the user just enabled the override while a Grammarly-active
+      // editor is focused, nothing else would re-trigger a pass — they'd
+      // flip it and still see nothing. Kick a re-check so it takes effect
+      // immediately (the whole point of the toggle is live testing).
+      if (!was && this.overrideCompetitors && this.activeElement) {
+        const el = this.activeElement;
+        this.debouncer.fire(() => void this.runCheck(el));
+      }
+    } catch {
+      /* keep last known value */
+    }
+  }
 
   constructor() {
     this.overlay = new UnderlineOverlay();
     this.tooltip = new TooltipManager();
     this.sentencePanel = new SentencePanel();
     this.summaryChip = new SummaryChip();
+    void this.refreshCoexistencePref();
+    chrome.storage.onChanged.addListener(this.onSettingsChanged);
     // 500ms (was 1500ms) — local spell-check fires on word boundaries for
     // instant feedback, so the cloud call here is just for grammar + style.
     // Tighter debounce keeps the perceived latency under ~1 second after
@@ -298,6 +330,9 @@ export abstract class BaseAdapter {
     // would miss it and leave both extensions painting on the same editor.
     // Re-evaluate on every listener fire; bail if a competitor has arrived.
     const competingSkip = (): boolean => {
+      // Power-user / testing override: run Polyscribe even alongside
+      // Grammarly/LanguageTool (expect overlapping underlines from both).
+      if (this.overrideCompetitors) return false;
       if (!hasCompetingExtension(element)) return false;
       if (element.dataset.pscSkippedReason !== 'competing-extension') {
         element.dataset.pscSkippedReason = 'competing-extension';

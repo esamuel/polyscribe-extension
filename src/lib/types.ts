@@ -15,6 +15,14 @@ export type Settings = {
    * overlay's "AI tells" tab still works on demand. Power-user opt-in.
    */
   enableInlineAiTells: boolean;
+  /**
+   * By default Polyscribe pauses its inline underlines on any editor where
+   * Grammarly / LanguageTool is also active, to avoid two extensions
+   * painting conflicting underlines. Turn this on to force Polyscribe to
+   * run anyway — useful for testing Polyscribe without uninstalling the
+   * other tool (expect overlapping underlines from both).
+   */
+  forceOverCompetingExtension: boolean;
   autoCheckOnSelection: boolean;
   /** Max automatic checks per full page load (5–100). Applies to both
    *  selection auto-checks and inline-underline auto-checks. */
@@ -31,6 +39,7 @@ export const DEFAULT_SETTINGS: Settings = {
   enableFloatingButton: true,
   enableInlineUnderlines: true,
   enableInlineAiTells: false,
+  forceOverCompetingExtension: false,
   autoCheckOnSelection: true,
   autoCheckQuotaPerPage: 20,
   defaultTone: 'professional',

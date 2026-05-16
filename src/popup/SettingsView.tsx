@@ -176,6 +176,25 @@ export function SettingsView({ settings, onSaved }: Props) {
               onChange={(e) => setDraft({ ...draft, enableInlineAiTells: e.target.checked })}
             />
           </label>
+          <label className="flex items-start justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+            <span className="text-sm text-gray-800">
+              <span className="font-medium">Run even if Grammarly is active</span>
+              <span className="mt-0.5 block text-[11px] text-gray-600">
+                Polyscribe normally pauses its underlines on fields where Grammarly or LanguageTool
+                is also running, to avoid tangled underlines. Turn this on to test Polyscribe
+                without disabling the other extension — you&apos;ll see underlines from both.
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              className="mt-1"
+              disabled={!draft.enableInlineUnderlines}
+              checked={draft.forceOverCompetingExtension}
+              onChange={(e) =>
+                setDraft({ ...draft, forceOverCompetingExtension: e.target.checked })
+              }
+            />
+          </label>
           <div>
             <label className="mb-1 block text-xs font-semibold text-gray-600">
               Auto-check quota per page
