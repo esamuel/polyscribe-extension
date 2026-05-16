@@ -1,5 +1,5 @@
 import { getSettings } from './storage';
-import type { CheckIssue, CheckResponse, HealthResponse, RewriteResponse, TranslateResponse } from './types';
+import type { CheckIssue, CheckResponse, HealthResponse, NiqqudResponse, RewriteResponse, TranslateResponse } from './types';
 
 /** Raw JSON from polyscribe-web `/api/check` (CheckResult). */
 type CheckApiRaw = {
@@ -159,6 +159,14 @@ export async function rewriteText(text: string, instruction: string): Promise<Re
 export async function adjustTone(text: string, tone: string): Promise<RewriteResponse> {
   const raw = await apiCall<Record<string, unknown>>('/api/tone', { text, tone });
   return { text: pickText(raw, ['rewrite', 'text']) };
+}
+
+export async function addNiqqud(text: string): Promise<NiqqudResponse> {
+  const raw = await apiCall<{ text?: string; engine?: 'dicta' | 'claude' }>(
+    '/api/niqqud',
+    { text },
+  );
+  return { text: typeof raw.text === 'string' ? raw.text : '', engine: raw.engine };
 }
 
 export async function translateText(

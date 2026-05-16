@@ -4,7 +4,7 @@ import {
   type PolyscribeRequest,
   type PolyscribeResponse,
 } from '../lib/messaging';
-import type { CheckResponse, RewriteResponse, TranslateResponse } from '../lib/types';
+import type { CheckResponse, NiqqudResponse, RewriteResponse, TranslateResponse } from '../lib/types';
 import { getSettings } from '../lib/storage';
 import {
   flagForLanguageCode,
@@ -293,7 +293,7 @@ export class PolyscribeOverlay {
     tabs: HTMLElement;
   };
 
-  private activeTab: 'check' | 'ai-tells' | 'rewrite' | 'tone' | 'translate' = 'check';
+  private activeTab: 'check' | 'ai-tells' | 'rewrite' | 'tone' | 'translate' | 'niqqud' = 'check';
 
   constructor() {
     let host = document.getElementById(HOST_ID);
@@ -347,7 +347,7 @@ export class PolyscribeOverlay {
   open(
     ctx: OverlayCtx,
     anchorRect: DOMRect,
-    options?: { startTab?: 'check' | 'ai-tells' | 'rewrite' | 'tone' | 'translate'; checkResult?: CheckResponse },
+    options?: { startTab?: 'check' | 'ai-tells' | 'rewrite' | 'tone' | 'translate' | 'niqqud'; checkResult?: CheckResponse },
   ): void {
     this.ctx = ctx;
     const rtl = contentNeedsRtl(ctx.text);
@@ -437,6 +437,10 @@ export class PolyscribeOverlay {
       this.renderTextResult('Tone', ctx.text, (resp.data as RewriteResponse).text);
       return;
     }
+    if (req.type === MSG.NIQQUD) {
+      this.renderTextResult('Niqqud', ctx.text, (resp.data as NiqqudResponse).text);
+      return;
+    }
     if (req.type === MSG.TRANSLATE) {
       this.renderTranslateResult(
         resp.data as TranslateResponse,
@@ -517,6 +521,7 @@ export class PolyscribeOverlay {
     mk('rewrite', 'Rewrite', iconSvg.pencil);
     mk('tone', 'Tone', iconSvg.palette);
     mk('translate', 'Translate', iconSvg.globe);
+    mk('niqqud', 'נקד', iconSvg.nikud);
   }
 
   private setMode(mode: typeof this.activeTab): void {
@@ -587,6 +592,19 @@ export class PolyscribeOverlay {
         b.addEventListener('click', () => void this.runTone(text, tone));
         row.appendChild(b);
       }
+      body.appendChild(row);
+      return;
+    }
+
+    if (this.activeTab === 'niqqud') {
+      body.innerHTML = `<div class="muted">Add Hebrew niqqud (ניקוד) to the selected text. Hebrew only.</div>`;
+      const row = document.createElement('div');
+      row.className = 'row';
+      const go = document.createElement('button');
+      go.className = 'btn';
+      go.textContent = 'Add niqqud';
+      go.addEventListener('click', () => void this.runNiqqud(text));
+      row.appendChild(go);
       body.appendChild(row);
       return;
     }
@@ -812,6 +830,18 @@ export class PolyscribeOverlay {
     if (!this.handleError(resp)) return;
     const data = (resp as { ok: true; data: RewriteResponse }).data;
     this.renderTextResult('Tone', text, data.text);
+  }
+
+  private async runNiqqud(text: string): Promise<void> {
+    if (!this.maybeWarnLong(text)) {
+      this.setMode('niqqud');
+      return;
+    }
+    this.setLoading(true);
+    const resp = await sendRequest({ type: MSG.NIQQUD, text });
+    if (!this.handleError(resp)) return;
+    const data = (resp as { ok: true; data: NiqqudResponse }).data;
+    this.renderTextResult('Niqqud', text, data.text);
   }
 
   private async runTranslate(

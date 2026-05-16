@@ -1,4 +1,5 @@
 import {
+  addNiqqud,
   adjustTone,
   aiCheckText,
   checkText,
@@ -168,6 +169,10 @@ async function handleApiRequest(req: PolyscribeRequest): Promise<PolyscribeRespo
       }
       case MSG.TRANSLATE: {
         const data = await translateText(req.text, req.from, req.to);
+        return { ok: true, data };
+      }
+      case MSG.NIQQUD: {
+        const data = await addNiqqud(req.text);
         return { ok: true, data };
       }
       case MSG.HEALTH: {

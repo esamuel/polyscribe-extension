@@ -80,6 +80,13 @@ export type RewriteResponse = {
   text: string;
 };
 
+export type NiqqudResponse = {
+  /** Hebrew text with niqqud (ניקוד) added. */
+  text: string;
+  /** Which engine produced it: Dicta (preferred) or the Claude fallback. */
+  engine?: 'dicta' | 'claude';
+};
+
 export type TranslateResponse = {
   text: string;
   detected_from?: string;
