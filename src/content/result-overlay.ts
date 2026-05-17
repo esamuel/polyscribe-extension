@@ -16,6 +16,10 @@ import {
 import { getSiteTranslatePrefs, setSiteTranslatePrefs } from '../lib/site-prefs';
 import { applyTextToRange } from './apply-text';
 import { iconSvg } from './icons';
+
+// chrome-extension:// URL — survives strict host-page CSP (unlike a data:
+// URI). Path must be in manifest web_accessible_resources.
+const BRAND_ICON_URL = chrome.runtime.getURL('public/icon-128.png');
 import { contentNeedsRtl } from './selection-utils';
 
 const HOST_ID = 'polyscribe-overlay-host';
@@ -317,7 +321,10 @@ export class PolyscribeOverlay {
 
     card.innerHTML = `
       <div class="hdr">
-        <div class="title">Polyscribe</div>
+        <div class="title" style="display:flex;align-items:center;gap:7px">
+          <img src="${BRAND_ICON_URL}" alt="" width="18" height="18" style="border-radius:5px;display:block" draggable="false">
+          <span>Polyscribe</span>
+        </div>
         <button type="button" class="iconbtn" data-close aria-label="Close">${iconSvg.close}</button>
       </div>
       <div class="subhdr"><a class="extlink" data-app-link href="#" rel="noreferrer">Open in web app ↗</a></div>

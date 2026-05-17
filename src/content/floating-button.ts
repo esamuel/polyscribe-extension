@@ -1,3 +1,7 @@
+// chrome-extension:// URL — bypasses host-page CSP (a data: URI would be
+// blocked on strict-CSP sites). Requires the path in web_accessible_resources.
+const BRAND_ICON_URL = chrome.runtime.getURL('public/icon-128.png');
+
 const HOST_ID = 'polyscribe-fab-host';
 export type FabMode = 'hidden' | 'idle' | 'issues' | 'ok' | 'checking';
 
@@ -203,7 +207,7 @@ export function setFabMode(
   host.style.display = '';
   if (mode === 'idle') {
     applySize(btn, SIZE_IDLE);
-    btn.innerHTML = '<span style="font-size:14px;font-weight:800;letter-spacing:-0.02em">P</span>';
+    btn.innerHTML = `<img src="${BRAND_ICON_URL}" alt="Polyscribe" style="width:100%;height:100%;object-fit:cover;border-radius:inherit;display:block" draggable="false">`;
     btn.style.animation = '';
     return;
   }

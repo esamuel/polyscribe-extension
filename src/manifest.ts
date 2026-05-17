@@ -31,4 +31,12 @@ export default defineManifest({
   ],
   permissions: ['storage', 'contextMenus', 'activeTab', 'scripting'],
   host_permissions: ['<all_urls>'],
+  // The content script renders the brand icon in its shadow-DOM UI (FAB +
+  // overlay header). A chrome-extension:// URL bypasses the host page's
+  // CSP img-src — a data: URI would be blocked on strict-CSP sites.
+  // Exposing it here is required for chrome.runtime.getURL to load it
+  // cross-site.
+  web_accessible_resources: [
+    { resources: ['public/icon-128.png'], matches: ['<all_urls>'] },
+  ],
 });
